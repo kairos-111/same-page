@@ -1,334 +1,532 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const activeStates = new Set(['loading', 'running', 'draining']);
-const stateNames = {loading: '正在加载本地模型…', running: '正在听译', draining: '正在完成尾段并保存…', completed: '已保存', error: '会话出错', interrupted: '已中断'};
-const sourceNames = {microphone: '麦克风', system: '电脑声音', file: '导入录音'};
-const sourceHints = {
-  microphone: '采集本机麦克风。首次使用时，请允许 macOS 麦克风权限。',
-  system: '采集其他应用正在播放的声音。macOS 可能要求屏幕与系统音频录制权限；不保存屏幕图像。',
-  file: '选择本机已有的录音或视频，按原速读取并生成双语字幕。'
+const ACTIVE = new Set(['loading', 'running', 'draining']);
+const SOURCE_NAME = {microphone: '麦克风', system: '电脑声音', file: '导入录音'};
+const SOURCE_HINT = {
+  microphone: '使用 Mac 当前的默认麦克风。第一次用时，系统会询问麦克风权限，点允许即可。',
+  system: '会听到电脑上所有正在播放的声音。第一次用时，macOS 可能要求「屏幕与系统音频录制」权限，不会保存任何画面。',
+  file: '选一个本机的录音或视频，按原速读取并生成字幕。'
 };
-let source = 'microphone';
+const SIZES = [22, 26, 30, 36, 44, 54];
+const MAX_LINES = 500;
+
+const pref = {
+  size: clampSize(Number(localStorage.getItem('tk.size') ?? 2)),
+  zhOnly: localStorage.getItem('tk.zhOnly') === '1',
+  model: localStorage.getItem('tk.model') === 'turbo' ? 'turbo' : 'small',
+  source: ['microphone', 'system', 'file'].includes(localStorage.getItem('tk.source')) ? localStorage.getItem('tk.source') : 'microphone'
+};
 let token = '';
-let current = null;
-let websocket = null;
-let rows = new Map();
-let connected = false;
 let ready = false;
-let pendingAction = '';
+let connected = false;
+let everConnected = false;
+let ws = null;
 let reconnectTimer = null;
 let reconnectDelay = 1500;
-let historyLoaded = false;
-let historyTimer = null;
-const clock = seconds => {
-  const s = Math.max(0, Math.floor(Number(seconds) || 0));
-  const hours = Math.floor(s / 3600);
-  return (hours ? String(hours).padStart(2, '0') + ':' : '') + String(Math.floor(s / 60) % 60).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+let current = null;       // 当前会话状态
+let view = 'start';
+let pending = '';         // 'upload' | 'start' | 'stop'
+let startNote = {text: '', error: false};
+let transient = null;     // 临时提示 {text, kind, until}
+let following = true;
+let stopArmed = null;
+const rows = new Map();
+
+function clampSize(i) { return Math.min(SIZES.length - 1, Math.max(0, Number.isFinite(i) ? i : 2)); }
+const num = v => Number.isFinite(Number(v)) ? Number(v) : 0;
+const clock = sec => {
+  const s = Math.max(0, Math.floor(num(sec)));
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(s % 60).padStart(2, '0');
 };
-const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
-function message(text, error = false) {
-  $('message').textContent = text;
-  $('message').className = 'message' + (error ? ' error' : '');
-}
-function updateControls() {
-  const busy = current && activeStates.has(current.state);
-  const locked = busy || !!pendingAction;
-  $('start').hidden = !!busy;
-  $('stop').hidden = !busy;
-  $('start').disabled = !connected || !ready || !!pendingAction;
-  $('stop').disabled = !connected || !!pendingAction || current?.state === 'draining';
-  $('start').innerHTML = pendingAction === 'start' ? '正在准备…' : '开始听译 <span aria-hidden="true">→</span>';
-  $('stop').textContent = pendingAction === 'stop' || current?.state === 'draining' ? '正在完成并保存…' : '停止并保存';
-  document.querySelectorAll('.source').forEach(el => { el.disabled = !!locked; });
-  for (const id of ['model', 'title', 'file']) $(id).disabled = !!locked;
-  for (const {row, data} of rows.values()) row.querySelector('.retry').hidden = !data.translation_error || current?.state !== 'running';
-}
-function connectionState(value, text) {
-  connected = value;
-  $('connection-dot').className = 'dot ' + (value ? 'connected' : 'disconnected');
-  $('connection-text').textContent = text;
-  updateControls();
-}
-async function readJSON(path, options = {}) {
-  const response = await fetch(path, {...options, cache: 'no-store'});
+const duration = sec => {
+  const s = Math.round(num(sec));
+  if (s < 60) return s + ' 秒';
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return h ? h + ' 小时 ' + m + ' 分' : m + ' 分钟';
+};
+const modelName = m => m === 'turbo' ? 'Whisper Turbo' : 'Whisper Small';
+
+async function getJSON(path, options = {}) {
+  const res = await fetch(path, {...options, cache: 'no-store'});
   let data;
-  try { data = await response.json(); } catch { data = {}; }
-  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '操作失败（' + response.status + '）');
+  try { data = await res.json(); } catch { data = {}; }
+  if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '操作没有成功（' + res.status + '）');
   return data;
 }
-function api(path, data) {
-  return readJSON(path, {
+function post(path, body) {
+  const form = body instanceof FormData;
+  return getJSON(path, {
     method: 'POST',
-    headers: {'x-session-token': token, ...(data instanceof FormData ? {} : {'Content-Type': 'application/json'})},
-    body: data instanceof FormData ? data : JSON.stringify(data || {})
+    headers: {'x-session-token': token, ...(form ? {} : {'Content-Type': 'application/json'})},
+    body: form ? body : JSON.stringify(body || {})
   });
 }
+
+/* ---------- 视图切换 ---------- */
+function show(next) {
+  view = next;
+  $('start-view').hidden = next !== 'start';
+  $('live-view').hidden = next !== 'live';
+  document.title = next === 'live' && current ? (current.title || '课堂') + ' · 听课' : '听课';
+  if (next === 'start') { renderStart(); loadHistory(); }
+  else { renderLive(); requestAnimationFrame(() => toEnd(false)); }
+}
+
+/* ---------- 开始页 ---------- */
 function selectSource(value) {
-  source = value;
-  document.querySelectorAll('.source').forEach(el => {
-    const selected = el.dataset.source === value;
-    el.classList.toggle('selected', selected);
-    el.setAttribute('aria-pressed', String(selected));
-  });
-  $('file-row').hidden = value !== 'file';
-  $('source-hint').textContent = sourceHints[value];
+  pref.source = value;
+  localStorage.setItem('tk.source', value);
+  document.querySelectorAll('.source').forEach(el => el.setAttribute('aria-checked', String(el.dataset.source === value)));
+  $('file-box').hidden = value !== 'file';
+  $('source-hint').textContent = SOURCE_HINT[value];
+  renderStart();
 }
-function clearSegments() {
-  rows.clear();
-  $('subtitles').replaceChildren();
-  $('empty').hidden = false;
-  $('segment-count').textContent = '0 个片段';
+function chosenFile() { return $('file').files[0] || null; }
+function showFile() {
+  const f = chosenFile();
+  $('file-box').classList.toggle('has-file', !!f);
+  $('file-text').textContent = f ? f.name + ' · ' + (f.size / 1024 ** 2).toFixed(1) + ' MB' : '点这里选文件，或把文件拖进来';
+  renderStart();
 }
-function followCaptions() {
-  if ($('follow').checked) $('subtitle-scroll').scrollTop = $('subtitle-scroll').scrollHeight;
+function renderStart() {
+  const conn = $('conn');
+  const lost = !connected && (everConnected || failures >= 2);
+  conn.className = 'conn ' + (connected && ready ? 'ok' : lost || (connected && !ready) ? 'bad' : '');
+  $('conn-text').textContent = connected ? (ready ? '本机已就绪' : '模型还没准备好') : everConnected ? '连接断开，正在重连…' : lost ? '连不上本机服务' : '正在连接…';
+
+  const busy = current && ACTIVE.has(current.state);
+  const needFile = pref.source === 'file' && !chosenFile();
+  const start = $('start');
+  start.disabled = !connected || !ready || !!pending || busy || needFile;
+  start.textContent = pending === 'upload' ? '正在导入…' : pending === 'start' ? '正在启动…' : '开始听课';
+  document.querySelectorAll('.source').forEach(el => { el.disabled = !!pending; });
+
+  const note = $('start-note');
+  let text = startNote.text, error = startNote.error;
+  if (!text) {
+    if (lost) { text = '连不上本机服务。请双击 outputs 里的「启动课堂翻译.command」，再刷新这个页面。'; error = true; }
+    else if (connected && !ready) { text = '识别和翻译模型还没部署完成，暂时不能开始。'; error = true; }
+    else if (busy) text = '另一个窗口正在上课，可以直接去看字幕。';
+    else if (needFile) text = '先选一个录音文件。';
+  }
+  note.textContent = text;
+  note.className = 'start-note' + (error ? ' error' : '');
+  if (busy && !pending) {
+    note.append(' ');
+    const a = document.createElement('a');
+    a.href = '#'; a.textContent = '打开字幕 →';
+    a.onclick = e => { e.preventDefault(); show('live'); };
+    note.append(a);
+  }
+  renderLast();
 }
-function segment(data, follow = true) {
+function renderLast() {
+  const box = $('last');
+  const s = current;
+  if (!s || ACTIVE.has(s.state) || !rows.size) { box.hidden = true; return; }
+  box.hidden = false;
+  $('last-title').textContent = s.title || '课堂记录';
+  $('last-meta').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · ' + (s.state === 'completed' ? '已保存' : s.state === 'error' ? '出错，已收到的内容已保存' : '中断，已收到的内容已保存');
+}
+
+async function loadHistory() {
+  try {
+    const list = await getJSON('/api/sessions');
+    const items = [...list].sort((a, b) => String(b.started_at || b.id).localeCompare(String(a.started_at || a.id))).slice(0, 20);
+    $('history').replaceChildren(...items.map(historyRow));
+    $('history-empty').hidden = items.length > 0;
+  } catch {
+    $('history-empty').hidden = false;
+    $('history-empty').textContent = '暂时读不到以前的记录。';
+  }
+}
+function historyRow(item) {
+  const li = document.createElement('li');
+  const main = document.createElement('div');
+  main.className = 'h-main';
+  const title = document.createElement('span');
+  title.className = 'h-title';
+  title.textContent = item.title || '课堂记录';
+  const meta = document.createElement('span');
+  meta.className = 'h-meta';
+  const d = new Date(item.started_at);
+  const when = Number.isNaN(d.getTime()) ? String(item.id || '').slice(0, 13) : d.toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false});
+  meta.textContent = when + ' · ' + duration(item.audio_seconds) + ' · ' + (SOURCE_NAME[item.source] || '音频');
+  const isLive = current && item.id === current.id && ACTIVE.has(current.state);
+  const odd = !isLive && item.state && item.state !== 'completed';
+  if (isLive || odd) {
+    const tag = document.createElement('span');
+    tag.className = 'warn';
+    tag.textContent = isLive ? ' · 正在进行' : item.state === 'error' ? ' · 出错' : ' · 未正常结束';
+    meta.append(tag);
+  }
+  main.append(title, meta);
+  li.append(main);
+  for (const [kind, label] of [['txt', '双语文本'], ['srt', '字幕 SRT']]) {
+    const a = document.createElement('a');
+    a.href = '/api/export/' + encodeURIComponent(item.id) + '/' + kind;
+    a.textContent = label;
+    a.setAttribute('aria-label', '下载「' + (item.title || '课堂记录') + '」' + label);
+    li.append(a);
+  }
+  return li;
+}
+
+/* ---------- 上课页 ---------- */
+const STATE_LABEL = {loading: '准备中', running: '正在听', draining: '正在收尾', completed: '已结束', error: '出错了', interrupted: '已中断'};
+const EMPTY_TEXT = {
+  loading: '正在加载本地模型，第一次可能要十几秒…',
+  running: '正在听。识别到英语后，字幕会出现在这里。',
+  draining: '正在处理最后一段…',
+  completed: '这堂课没有识别到英语内容。',
+  error: '这堂课出了问题，没有生成字幕。',
+  interrupted: '这堂课中断了，没有生成字幕。'
+};
+function renderLive() {
+  const s = current;
+  if (!s) return;
+  const active = ACTIVE.has(s.state);
+  $('rec').className = 'rec ' + ({running: 'on', loading: 'busy', draining: 'busy', completed: 'ok'}[s.state] || 'bad');
+  $('live-state').textContent = STATE_LABEL[s.state] || '—';
+  $('live-clock').textContent = clock(s.audio_seconds);
+  $('live-title').textContent = s.title || '课堂记录';
+  if (view === 'live') document.title = (s.title || '课堂') + ' · 听课';
+
+  const lit = s.state === 'running' ? Math.min(5, Math.round(num(s.level) * 30)) : 0;
+  const bars = $('live-level');
+  bars.classList.toggle('lit', lit > 0);
+  [...bars.children].forEach((b, i) => { b.style.height = (i < lit ? 5 + i * 2.2 : 3) + 'px'; });
+
+  const stop = $('stop');
+  stop.hidden = !active;
+  stop.disabled = !connected || pending === 'stop' || s.state === 'draining';
+  stop.textContent = s.state === 'draining' || pending === 'stop' ? '保存中…' : stopArmed ? '确定结束？' : '结束';
+  stop.classList.toggle('armed', !!stopArmed);
+
+  $('i-lag').textContent = active ? num(s.asr_lag).toFixed(1) + ' 秒' : '—';
+  $('i-queue').textContent = active ? num(s.translation_queue) + (s.translation_busy ? ' 句（1 句翻译中）' : ' 句') : '—';
+  $('i-wait').textContent = active && num(s.translation_queue) ? num(s.translation_wait).toFixed(1) + ' 秒' : '—';
+  $('i-mem').textContent = s.memory_bytes ? (num(s.memory_bytes) / 1024 ** 3).toFixed(1) + ' GB' : '—';
+  $('i-model').textContent = modelName(s.model);
+  $('i-source').textContent = SOURCE_NAME[s.source] || '—';
+  $('i-count').textContent = rows.size + ' 句' + (s.final_count != null ? '，已确认 ' + s.final_count : '');
+  for (const [id, kind] of [['dl-txt', 'txt'], ['dl-srt', 'srt'], ['dl-txt-live', 'txt'], ['dl-srt-live', 'srt']]) {
+    $(id).href = '/api/export/' + encodeURIComponent(s.id) + '/' + kind;
+  }
+
+  $('live-empty').hidden = rows.size > 0;
+  $('live-empty-text').textContent = EMPTY_TEXT[s.state] || '';
+  $('live-empty').querySelector('.pulse').hidden = !active;
+
+  $('back').hidden = active;
+  const done = $('done');
+  done.hidden = active;
+  if (!active) {
+    $('done-title').textContent = s.state === 'completed' ? '这堂课已保存' : s.state === 'error' ? '这堂课出错停止了' : '这堂课中断了';
+    $('done-sub').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · 录音和字幕都保存在这台电脑上';
+  }
+  renderBanner();
+}
+function renderBanner() {
+  const b = $('banner');
+  const s = current;
+  let text = '', kind = '';
+  if (transient && transient.until > Date.now()) ({text, kind} = transient);
+  else if (!connected) { text = '和本机服务的连接断了，正在重连。录音不受影响，会继续在后台进行。'; kind = 'error'; }
+  else if (s?.error) { text = s.error; kind = 'error'; }
+  else if (s?.state === 'draining') { text = '已停止收音，正在把最后几句处理完并保存，请稍等，不要关闭启动程序。'; kind = 'info'; }
+  else if (s?.state === 'interrupted') { text = '会话中断了。已收到的声音保存在本机，可以用「已有录音」重新处理。'; kind = 'error'; }
+  else if (s?.state === 'running' && num(s.input_idle) > 5) { text = '已经 ' + Math.round(num(s.input_idle)) + ' 秒没收到声音了。检查一下声音有没有在播放、输入设备或系统权限。'; kind = 'warn'; }
+  else if (s?.state === 'running' && (num(s.asr_lag) > 30 || num(s.translation_wait) > 30)) { text = '处理落后比较多，正在追。声音都在保存，不会丢。'; kind = 'warn'; }
+  else if (s?.state === 'running' && (num(s.asr_lag) > 15 || num(s.translation_wait) > 15)) { text = '字幕稍慢，正在追上…'; kind = 'warn'; }
+  b.hidden = !text;
+  b.textContent = text;
+  b.className = 'banner' + (kind && kind !== 'warn' ? ' ' + kind : '');
+}
+function flash(text, kind = 'error', ms = 6000) {
+  transient = {text, kind, until: Date.now() + ms};
+  if (view === 'live') renderBanner();
+  else { startNote = {text, error: kind === 'error'}; renderStart(); }
+  setTimeout(() => {
+    if (transient && transient.until <= Date.now()) { transient = null; renderBanner(); }
+    if (startNote.text === text) { startNote = {text: '', error: false}; renderStart(); }
+  }, ms + 50);
+}
+
+/* ---------- 字幕行 ---------- */
+function upsertLine(data) {
   if (!data.id) return;
-  $('empty').hidden = true;
   let entry = rows.get(data.id);
   if (!entry) {
-    const row = document.createElement('article');
-    row.className = 'subtitle';
-    row.innerHTML = '<div class="sub-meta"><span class="time"></span><span class="sub-label"></span></div><div class="english" lang="en"></div><div class="chinese" lang="zh-CN"></div><div class="translation-note" hidden></div><div class="translation-error" hidden></div><button type="button" class="retry" hidden>重试翻译</button>';
-    $('subtitles').append(row);
-    entry = {row, data};
+    const li = document.createElement('li');
+    li.className = 'line';
+    li.innerHTML = '<span class="t"></span><div class="en" lang="en"></div><div class="zh" lang="zh-CN"></div><button type="button" class="retry" hidden>重新翻译这句</button>';
+    li.querySelector('.retry').onclick = () => retry(data.id, li.querySelector('.retry'));
+    $('lines').append(li);
+    entry = {li, data};
     rows.set(data.id, entry);
-    row.querySelector('.retry').onclick = async () => {
-      const button = row.querySelector('.retry');
-      button.disabled = true;
-      button.textContent = '正在提交…';
-      try {
-        await api('/api/retry/' + encodeURIComponent(data.id));
-        button.textContent = '已加入翻译队列';
-        message('已重新提交该片段；译文完成后会自动更新。');
-      } catch (error) {
-        message(error.message, true);
-        button.textContent = '重试翻译';
-        button.disabled = false;
-      }
-    };
+    while (rows.size > MAX_LINES) {
+      const [key, old] = rows.entries().next().value;
+      old.li.remove();
+      rows.delete(key);
+    }
   }
   entry.data = data;
-  const row = entry.row;
-  const hasTranslation = typeof data.translation === 'string' && !!data.translation.trim();
-  const matched = hasTranslation && data.translated_revision != null && data.translated_revision === data.revision;
-  const stale = hasTranslation && !matched;
-  const failed = !!data.translation_error;
-  row.className = 'subtitle' + (!data.final ? ' draft' : '') + (stale ? ' stale' : '') + (!hasTranslation ? ' pending' : '') + (failed ? ' failed' : '');
-  row.querySelector('.time').textContent = clock(data.start) + ' — ' + clock(data.end);
-  row.querySelector('.sub-label').textContent = failed ? '翻译失败' : stale ? '译文更新中' : !hasTranslation ? (data.final ? '等待翻译' : '识别中 · 等待翻译') : data.final ? '已确认' : '临时译文 · 可能修订';
-  row.querySelector('.english').textContent = data.source || '';
-  row.querySelector('.chinese').textContent = hasTranslation ? data.translation : failed ? '暂未获得中文译文' : '正在等待中文译文…';
-  const note = row.querySelector('.translation-note');
-  note.hidden = !stale;
-  note.textContent = failed ? '显示的是旧版译文，尚未匹配当前原文。' : '原文已有变化，先显示旧版译文，等待更新。';
-  const error = row.querySelector('.translation-error');
-  error.hidden = !failed;
-  error.textContent = failed ? '原文已保留。' + data.translation_error : '';
-  const retry = row.querySelector('.retry');
-  retry.hidden = !failed || current?.state !== 'running';
-  retry.disabled = false;
-  retry.textContent = '重试翻译';
-  // The server retains a rolling window; full records remain available through exports.
-  while (rows.size > 500) {
-    const [key, previous] = rows.entries().next().value;
-    previous.row.remove();
-    rows.delete(key);
-  }
-  $('segment-count').textContent = rows.size + ' 个片段' + (rows.size === 500 ? ' · 显示最近内容' : '');
-  if (follow) followCaptions();
+  paint(entry);
+  ageLines();
+  $('live-empty').hidden = true;
 }
-function renderStatusMessage(s) {
-  if (!connected) return;
-  if (s.error) message(s.error, true);
-  else if (s.state === 'loading') message('正在加载本地识别与翻译模型，首次加载可能需要一点时间。');
-  else if (s.state === 'draining') message('已停止收音，正在处理剩余音频和译文；保存完成前请保持服务运行。');
-  else if (number(s.asr_lag) > 30 || number(s.translation_wait) > 30) message('处理明显落后。音频继续保存在本机，未处理内容会继续排队。', true);
-  else if (number(s.asr_lag) > 15 || number(s.translation_wait) > 15) message('正在追赶课堂进度，已减少临时重译；音频与未完成片段持续保存。');
-  else if (s.state === 'running' && number(s.input_idle) > 5) message('暂时没有新的音频数据，请检查声音播放、输入设备或系统权限。', true);
-  else if (s.state === 'running') message('中文尽早显示；临时译文可能修订，原文与译文匹配后才会标记「已确认」。');
-  else if (s.state === 'completed') message('会话已保存。双语 TXT 保留片段状态，SRT 仅导出已确认的双语字幕。');
-  else if (s.state === 'interrupted') message('会话已中断，已接收的音频保存在本机；可导入录音重新处理未完成内容。', true);
+function paint({li, data}) {
+  const zhText = typeof data.translation === 'string' ? data.translation.trim() : '';
+  const matched = !!zhText && data.translated_revision != null && data.translated_revision === data.revision;
+  const failed = !!data.translation_error && !matched;
+  const settled = data.final && matched;
+  li.className = 'line' + (!zhText ? (failed ? ' failed' : ' waiting') : settled ? '' : ' draft') + (li.classList.contains('old') ? ' old' : '');
+  li.querySelector('.t').textContent = clock(data.start);
+  li.querySelector('.en').textContent = data.source || '';
+  li.querySelector('.zh').textContent = zhText || (failed ? '这句没翻译出来' : '翻译中…');
+  li.title = failed ? '翻译失败：' + data.translation_error : '';
+  const btn = li.querySelector('.retry');
+  btn.hidden = !failed || current?.state !== 'running';
+  btn.disabled = false;
+  btn.textContent = '重新翻译这句';
 }
-function status(data) {
-  if (!data) return;
-  const previous = current;
-  if (previous?.id !== data.id) clearSegments();
-  current = data;
-  if (activeStates.has(data.state)) {
-    selectSource(data.source || 'microphone');
-    $('model').value = data.model || 'turbo';
-    $('title').value = data.title || '';
-  }
-  $('state').textContent = stateNames[data.state] || '等待开始';
-  $('state-dot').className = 'dot ' + (data.state === 'running' ? 'running' : ['error', 'interrupted'].includes(data.state) ? 'error' : '');
-  $('duration').textContent = clock(data.audio_seconds);
-  $('lag').textContent = number(data.asr_lag).toFixed(1) + ' 秒';
-  $('lag').parentElement.classList.toggle('alert', number(data.asr_lag) > 15);
-  $('queue').textContent = number(data.translation_queue) + (data.translation_busy ? ' + 1 处理中' : '');
-  $('queue').style.fontSize = data.translation_busy ? '16px' : '';
-  $('queue').parentElement.classList.toggle('alert', number(data.translation_wait) > 15);
-  $('memory').textContent = data.memory_bytes ? (number(data.memory_bytes) / 1024 ** 3).toFixed(1) + ' GB' : '—';
-  const level = activeStates.has(data.state) ? Math.min(100, number(data.level) * 600) : 0;
-  $('level').style.width = level + '%';
-  $('meter').setAttribute('aria-valuenow', String(Math.round(level)));
-  $('caption-title').textContent = data.title || '课堂字幕';
-  $('session-meta').textContent = (sourceNames[data.source] || '本机音频') + ' · Whisper ' + (data.model === 'small' ? 'Small' : 'Turbo') + ' · English → 简体中文';
-  $('exports').hidden = false;
-  $('save-note').textContent = activeStates.has(data.state) ? '音频与字幕持续保存在本机' : '记录已保存在本机';
-  for (const kind of ['txt', 'srt']) {
-    $('export-' + kind).href = '/api/export/' + encodeURIComponent(data.id) + '/' + kind;
-    $('export-' + kind).setAttribute('aria-label', '下载当前课堂双语 ' + kind.toUpperCase());
-  }
-  updateControls();
-  renderStatusMessage(data);
-  if (!activeStates.has(data.state) && (previous?.id !== data.id || previous?.state !== data.state)) {
-    clearTimeout(historyTimer);
-    historyTimer = setTimeout(() => { if ($('history-details').open || historyLoaded) loadHistory(); }, 1200);
-  }
+function repaintAll() { for (const e of rows.values()) paint(e); }
+// 跟随最新内容时，较早的句子稍微变淡，让视线落在最新几句上
+function ageLines() {
+  const dim = following && current && ACTIVE.has(current.state);
+  const list = [...rows.values()];
+  list.forEach(({li}, i) => li.classList.toggle('old', dim && i < list.length - 4));
 }
-function snapshot(data) {
-  clearSegments();
-  if (data.status) status(data.status);
-  for (const item of data.segments || []) segment(item, false);
-  followCaptions();
+async function retry(id, btn) {
+  btn.disabled = true;
+  btn.textContent = '已提交…';
+  try { await post('/api/retry/' + encodeURIComponent(id)); btn.textContent = '已重新排队'; }
+  catch (e) { btn.disabled = false; btn.textContent = '重新翻译这句'; flash(e.message); }
+}
+
+/* ---------- 滚动：默认跟随，往上翻就暂停，一键回来 ---------- */
+let autoScrollUntil = 0;
+const scroller = $('scroller');
+function nearEnd() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120; }
+function toEnd(smooth) {
+  following = true;
+  $('jump').hidden = true;
+  autoScrollUntil = Date.now() + (smooth ? 600 : 80);
+  scroller.scrollTo({top: scroller.scrollHeight, behavior: smooth ? 'smooth' : 'auto'});
+  ageLines();
+}
+function keepFollowing() { if (following && view === 'live') toEnd(false); else if (!following) $('jump').hidden = false; }
+scroller.addEventListener('scroll', () => {
+  if (Date.now() < autoScrollUntil) return;
+  const was = following;
+  following = nearEnd();
+  $('jump').hidden = following;
+  if (was !== following) ageLines();
+}, {passive: true});
+$('jump').onclick = () => toEnd(true);
+
+/* ---------- 状态与数据 ---------- */
+function applyStatus(s) {
+  const prev = current;
+  if (prev && prev.id !== s.id) { rows.clear(); $('lines').replaceChildren(); }
+  current = s;
+  const nowActive = ACTIVE.has(s.state);
+  if (nowActive && view !== 'live') show('live');
+  if (!prev || prev.state !== s.state) { repaintAll(); ageLines(); }
+  if (prev && ACTIVE.has(prev.state) && !nowActive) { disarmStop(); loadHistory(); }
+  renderLive();
+  if (view === 'start') renderStart();
+}
+function snapshot(status, segments) {
+  rows.clear();
+  $('lines').replaceChildren();
+  current = null;
+  if (status) applyStatus(status);
+  for (const seg of segments || []) upsertLine(seg);
+  if (current) renderLive();
+  if (view === 'live') toEnd(false);
+  else renderStart();
+}
+function clearSession() {
+  current = null;
+  rows.clear();
+  $('lines').replaceChildren();
+  if (view === 'live') show('start');
+}
+
+/* ---------- 操作 ---------- */
+function disarmStop() { clearTimeout(stopArmed); stopArmed = null; }
+$('stop').onclick = async () => {
+  if (pending || !current || !ACTIVE.has(current.state)) return;
+  // 防误触：第一次点只是确认，3 秒内再点才真正结束
+  if (!stopArmed) {
+    stopArmed = setTimeout(() => { stopArmed = null; renderLive(); }, 3000);
+    renderLive();
+    return;
+  }
+  disarmStop();
+  pending = 'stop';
+  renderLive();
+  try {
+    await post('/api/stop');
+    const data = await getJSON('/api/state');
+    if (data.session) applyStatus(data.session);
+  } catch (e) { flash(e.message || '结束没有成功，请再试一次。'); }
+  finally { pending = ''; renderLive(); }
+};
+
+$('start').onclick = async () => {
+  if (pending || !connected || !ready) return;
+  startNote = {text: '', error: false};
+  try {
+    let uploadId;
+    if (pref.source === 'file') {
+      const f = chosenFile();
+      if (!f) throw new Error('先选一个录音文件。');
+      if (!f.size) throw new Error('这个文件是空的，换一个试试。');
+      if (f.size > 1024 ** 3) throw new Error('文件超过 1 GB，换一个小一点的。');
+      pending = 'upload'; renderStart();
+      const form = new FormData();
+      form.append('file', f);
+      uploadId = (await post('/api/uploads', form)).id;
+    }
+    pending = 'start'; renderStart();
+    await post('/api/sessions', {source: pref.source, model: pref.model, title: $('title').value.trim(), upload_id: uploadId, realtime: true});
+    const data = await getJSON('/api/state');
+    pending = '';
+    if (data.session) snapshot(data.session, data.segments);
+    $('title').value = '';
+    if (pref.source === 'file') { $('file').value = ''; showFile(); }
+    show('live');
+  } catch (e) {
+    pending = '';
+    startNote = {text: e.message || '没能开始，请再试一次。', error: true};
+    renderStart();
+  }
+};
+$('new-class').onclick = () => { startNote = {text: '', error: false}; show('start'); $('title').focus(); };
+$('last-open').onclick = () => show('live');
+$('back').onclick = () => show('start');
+
+document.querySelectorAll('.source').forEach(el => { el.onclick = () => selectSource(el.dataset.source); });
+$('file').onchange = showFile;
+// 把文件拖到开始页任意位置都能导入
+const startView = $('start-view');
+startView.addEventListener('dragover', e => {
+  if (pending || !e.dataTransfer?.types.includes('Files')) return;
+  e.preventDefault();
+  if (pref.source !== 'file') selectSource('file');
+  $('file-box').classList.add('drag');
+});
+startView.addEventListener('dragleave', e => { if (!startView.contains(e.relatedTarget)) $('file-box').classList.remove('drag'); });
+startView.addEventListener('drop', e => {
+  e.preventDefault();
+  $('file-box').classList.remove('drag');
+  const f = e.dataTransfer?.files?.[0];
+  if (!f || pending) return;
+  const dt = new DataTransfer();
+  dt.items.add(f);
+  $('file').files = dt.files;
+  showFile();
+});
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+document.querySelectorAll('input[name="model"]').forEach(el => {
+  el.checked = el.value === pref.model;
+  el.onchange = () => { pref.model = el.value; localStorage.setItem('tk.model', el.value); showModel(); };
+});
+function showModel() { $('model-tag').textContent = pref.model === 'turbo' ? '更准 · Turbo' : '快速 · Small'; }
+showModel();
+
+/* ---------- 阅读设置 ---------- */
+function applyPrefs() {
+  document.documentElement.style.setProperty('--zh', SIZES[pref.size] + 'px');
+  $('lines').classList.toggle('zh-only', pref.zhOnly);
+  $('zh-only').setAttribute('aria-pressed', String(pref.zhOnly));
+  $('size-down').disabled = pref.size === 0;
+  $('size-up').disabled = pref.size === SIZES.length - 1;
+}
+function setSize(delta) {
+  pref.size = clampSize(pref.size + delta);
+  localStorage.setItem('tk.size', String(pref.size));
+  applyPrefs();
+  if (following) toEnd(false);
+}
+$('size-down').onclick = () => setSize(-1);
+$('size-up').onclick = () => setSize(1);
+$('zh-only').onclick = () => {
+  pref.zhOnly = !pref.zhOnly;
+  localStorage.setItem('tk.zhOnly', pref.zhOnly ? '1' : '0');
+  applyPrefs();
+  if (following) toEnd(false);
+};
+function togglePop(open) {
+  const want = open ?? $('info').hidden;
+  $('info').hidden = !want;
+  $('info-btn').setAttribute('aria-expanded', String(want));
+}
+$('info-btn').onclick = e => { e.stopPropagation(); togglePop(); };
+document.addEventListener('click', e => { if (!$('info').hidden && !e.target.closest('.pop-wrap')) togglePop(false); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { togglePop(false); if (stopArmed) { disarmStop(); renderLive(); } }
+  if (view !== 'live' || e.target.closest('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '+' || e.key === '=') setSize(1);
+  else if (e.key === '-') setSize(-1);
+  else if (e.key === 'End') toEnd(true);
+});
+
+/* ---------- 连接 ---------- */
+let failures = 0;
+function setConnected(value) {
+  connected = value;
+  if (value) { everConnected = true; failures = 0; }
+  if (view === 'live') renderLive(); else renderStart();
 }
 function scheduleReconnect() {
   if (reconnectTimer) return;
-  connectionState(false, '连接中断 · 正在重连');
-  message('本机字幕连接中断，正在自动重连；页面断线不会停止服务端采集。', true);
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    initialize();
-  }, reconnectDelay);
+  failures++;
+  setConnected(false);
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; init(); }, reconnectDelay);
   reconnectDelay = Math.min(10000, reconnectDelay * 1.5);
 }
 function connect() {
   const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?token=' + encodeURIComponent(token));
-  websocket = socket;
-  socket.onopen = () => {
-    if (websocket !== socket) return;
-    reconnectDelay = 1500;
-    connectionState(true, ready ? '本机服务已连接' : '模型尚未准备完成');
-    if (!ready) message('模型与运行环境仍在准备，请从页底查看下载进度。');
-    else if (current) renderStatusMessage(current);
-    else message('选择声音来源，开始听译。中文会尽早出现，临时译文可能随讲话修订。');
+  ws = socket;
+  socket.onopen = () => { if (ws === socket) { reconnectDelay = 1500; setConnected(true); } };
+  socket.onmessage = ev => {
+    if (ws !== socket) return;
+    let data;
+    try { data = JSON.parse(ev.data); } catch { socket.close(); return; }
+    if (data.type === 'snapshot') snapshot(data.status, data.segments);
+    else if (data.type === 'segment') { upsertLine(data); keepFollowing(); if (current) renderLive(); }
+    else if (data.type === 'status') applyStatus(data);
+    else if (data.type === 'error') flash(data.message || '本机处理出了点问题。');
   };
-  socket.onmessage = event => {
-    if (websocket !== socket) return;
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === 'snapshot') snapshot(data);
-      else if (data.type === 'segment') segment(data);
-      else if (data.type === 'status') status(data);
-      else if (data.type === 'error') message(data.message || '本机处理发生错误', true);
-    } catch { message('收到的字幕数据无法解析，正在重新同步。', true); socket.close(); }
-  };
-  socket.onclose = () => { if (websocket === socket) scheduleReconnect(); };
-  socket.onerror = () => { socket.close(); };
+  socket.onclose = () => { if (ws === socket) scheduleReconnect(); };
+  socket.onerror = () => socket.close();
 }
-async function initialize() {
+async function init(first = false) {
   try {
-    const data = await readJSON('/api/state', {signal: AbortSignal.timeout(10000)});
+    const data = await getJSON('/api/state', {signal: AbortSignal.timeout(10000)});
     token = data.token;
     ready = !!data.ready;
-    if (data.session) snapshot({status: data.session, segments: data.segments});
-    else {
-      current = null;
-      clearSegments();
-      $('exports').hidden = true;
-      $('caption-title').textContent = '课堂字幕';
-      $('session-meta').textContent = '英文原文 · 中文译文';
-      $('state').textContent = '准备开始';
-      $('state-dot').className = 'dot';
-      $('duration').textContent = '00:00';
-      for (const id of ['lag', 'queue', 'memory']) $(id).textContent = '—';
-      $('level').style.width = '0%';
-      $('meter').setAttribute('aria-valuenow', '0');
-    }
-    if (!websocket || websocket.readyState > WebSocket.OPEN) connect();
-  } catch { scheduleReconnect(); }
+    if (data.session) snapshot(data.session, data.segments);
+    else clearSession();
+    if (first) show(current && ACTIVE.has(current.state) ? 'live' : 'start');
+    if (!ws || ws.readyState > WebSocket.OPEN) connect();
+    else setConnected(true);
+  } catch {
+    if (first) show('start');
+    scheduleReconnect();
+  }
 }
-document.querySelectorAll('.source').forEach(el => {
-  el.onclick = () => selectSource(el.dataset.source);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && (!ws || ws.readyState === WebSocket.CLOSED) && !reconnectTimer) init();
 });
-$('file').onchange = () => {
-  const file = $('file').files[0];
-  $('file-info').textContent = file ? file.name + ' · ' + (file.size / 1024 ** 2).toFixed(1) + ' MB · 按原速读取' : '按原速读取录音，结果自动保存在本机。';
-};
-$('follow').onchange = followCaptions;
-$('start').onclick = async () => {
-  if (pendingAction || !connected || !ready) return;
-  pendingAction = 'start';
-  updateControls();
-  try {
-    let uploadId;
-    if (source === 'file') {
-      const file = $('file').files[0];
-      if (!file) throw new Error('请先选择录音或视频文件。');
-      if (!file.size) throw new Error('录音文件为空，请重新选择。');
-      if (file.size > 1024 ** 3) throw new Error('单个录音最多 1 GB，请选择较小的文件。');
-      message('正在导入「' + file.name + '」，请稍候…');
-      const form = new FormData();
-      form.append('file', file);
-      uploadId = (await api('/api/uploads', form)).id;
-    }
-    await api('/api/sessions', {source, model: $('model').value, title: $('title').value.trim(), upload_id: uploadId, realtime: true});
-    message('正在加载本地模型，字幕将在识别到英语后出现。');
-    const data = await readJSON('/api/state');
-    if (data.session) snapshot({status: data.session, segments: data.segments});
-  } catch (error) { message(error.message || '开始失败，请重试。', true); }
-  finally { pendingAction = ''; updateControls(); }
-};
-$('stop').onclick = async () => {
-  if (pendingAction) return;
-  pendingAction = 'stop';
-  updateControls();
-  message('正在停止收音，并完成剩余内容与保存…');
-  try {
-    await api('/api/stop');
-    const data = await readJSON('/api/state');
-    if (data.session) snapshot({status: data.session, segments: data.segments});
-  } catch (error) { message(error.message || '停止请求失败，请检查服务。', true); }
-  finally { pendingAction = ''; updateControls(); }
-};
-async function loadHistory() {
-  $('history-button').disabled = true;
-  $('history-status').textContent = '正在读取…';
-  try {
-    const data = await readJSON('/api/sessions');
-    const sessions = [...data].sort((a, b) => String(b.started_at || b.id).localeCompare(String(a.started_at || a.id))).slice(0, 20);
-    $('history').replaceChildren(...sessions.map(item => {
-      const row = document.createElement('div');
-      row.className = 'history-row';
-      const info = document.createElement('div');
-      info.className = 'history-info';
-      const title = document.createElement('span');
-      title.className = 'history-title';
-      title.textContent = item.title || '课堂记录';
-      const meta = document.createElement('span');
-      meta.className = 'history-meta';
-      let date = (item.started_at || '').slice(0, 16).replace('T', ' ');
-      const parsed = new Date(item.started_at);
-      if (!Number.isNaN(parsed.getTime())) date = parsed.toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false});
-      meta.textContent = date + ' · ' + clock(item.audio_seconds) + ' · ' + (sourceNames[item.source] || '音频') + ' · ' + (stateNames[item.state] || item.state || '记录');
-      info.append(title, meta);
-      row.append(info);
-      for (const [kind, text] of [['txt', '双语 TXT'], ['srt', 'SRT']]) {
-        const link = document.createElement('a');
-        link.href = '/api/export/' + encodeURIComponent(item.id) + '/' + kind;
-        link.textContent = text;
-        link.setAttribute('aria-label', '下载「' + (item.title || '课堂记录') + '」' + text);
-        row.append(link);
-      }
-      return row;
-    }));
-    historyLoaded = true;
-    $('history-status').textContent = sessions.length ? '最近 ' + sessions.length + ' 条记录 · 下载双语文本或已确认的字幕' : '还没有课堂记录。开始一堂课后，记录会自动保存在这里。';
-  } catch (error) { $('history-status').textContent = '历史记录读取失败：' + error.message; }
-  finally { $('history-button').disabled = false; }
-}
-$('history-button').onclick = loadHistory;
-$('history-details').addEventListener('toggle', () => { if ($('history-details').open && !historyLoaded) loadHistory(); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && websocket?.readyState === WebSocket.CLOSED && !reconnectTimer) initialize(); });
-initialize();
+
+applyPrefs();
+selectSource(pref.source);
+init(true);
