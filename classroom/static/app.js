@@ -7,11 +7,12 @@ const SOURCE_HINT = {
   system: '会听到电脑上所有正在播放的声音。第一次用时，macOS 可能要求「屏幕与系统音频录制」权限，不会保存任何画面。',
   file: '选一个本机的录音或视频，按原速读取并生成字幕。'
 };
-const SIZES = [22, 26, 30, 36, 44, 54];
+const SIZES = [13, 15, 17, 19, 22, 26, 30, 36];
 const MAX_LINES = 500;
 
 const pref = {
-  size: clampSize(Number(localStorage.getItem('tk.size') ?? 2)),
+  zh: clampSize(Number(localStorage.getItem('tk.zhSize') ?? 2)),
+  en: clampSize(Number(localStorage.getItem('tk.enSize') ?? 2)),
   zhOnly: localStorage.getItem('tk.zhOnly') === '1',
   model: localStorage.getItem('tk.model') === 'turbo' ? 'turbo' : 'small',
   source: ['microphone', 'system', 'file'].includes(localStorage.getItem('tk.source')) ? localStorage.getItem('tk.source') : 'microphone'
@@ -70,7 +71,7 @@ function show(next) {
   $('live-view').hidden = next !== 'live';
   document.title = next === 'live' && current ? (current.title || '课堂') + ' · 听课' : '听课';
   if (next === 'start') { renderStart(); loadHistory(); }
-  else { renderLive(); requestAnimationFrame(() => toEnd(false)); }
+  else { finishAll(); renderLive(); requestAnimationFrame(() => toEnd(false)); }
 }
 
 /* ---------- 开始页 ---------- */
@@ -254,56 +255,172 @@ function flash(text, kind = 'error', ms = 6000) {
   }, ms + 50);
 }
 
-/* ---------- 字幕行 ---------- */
+/* ---------- 字幕：几句合成一段，逐字出现，修正时慢慢淡入 ---------- */
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let animate = true;            // 快照恢复时关闭动画，直接显示
+const typing = new Set();
+let typeTimer = null;
+function commonPrefix(a, b) { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; }
+class Typer {
+  constructor(el, onSettle) {
+    this.el = el; this.shown = ''; this.target = ''; this.busy = false; this.gen = 0; this.onSettle = onSettle;
+  }
+  set(text) {
+    this.target = text;
+    if (!animate || reduceMotion || document.hidden) { this.finish(); return; }
+    if (!this.busy && text !== this.shown) { typing.add(this); if (!typeTimer) typeTimer = setInterval(tick, 40); }
+  }
+  finish() {
+    this.gen++; this.busy = false; typing.delete(this);
+    if (this.shown !== this.target || this.el.childNodes.length !== 1) { this.shown = this.target; this.el.textContent = this.target; }
+    this.onSettle?.(this.target);
+  }
+  step() {
+    if (this.busy) return;
+    if (this.target === this.shown) { typing.delete(this); this.onSettle?.(this.target); return; }
+    if (!this.target.startsWith(this.shown)) { this.correct(); return; }
+    const left = this.target.length - this.shown.length;
+    this.shown = this.target.slice(0, this.shown.length + Math.max(1, Math.ceil(left / 12)));
+    this.el.textContent = this.shown;
+  }
+  // 修正：保留相同开头，只把变化的部分淡出再慢慢淡入；过渡期间锁定，不再切换
+  correct() {
+    this.busy = true;
+    const gen = ++this.gen;
+    const keep = commonPrefix(this.shown, this.target);
+    const head = document.createTextNode(this.shown.slice(0, keep));
+    const tail = document.createElement('span');
+    tail.className = 'fix';
+    tail.textContent = this.shown.slice(keep);
+    this.el.replaceChildren(head, tail);
+    requestAnimationFrame(() => tail.classList.add('out'));
+    setTimeout(() => {
+      if (gen !== this.gen) return;
+      const k = commonPrefix(this.shown, this.target);
+      head.textContent = this.target.slice(0, k);
+      tail.textContent = this.target.slice(k);
+      tail.classList.remove('out');
+      tail.classList.add('in');
+      this.shown = this.target;
+      setTimeout(() => {
+        if (gen !== this.gen) return;
+        this.el.textContent = this.shown;
+        this.busy = false;
+        this.step();
+        if (!typing.has(this) && this.shown !== this.target) typing.add(this);
+      }, 1400);
+    }, 500);
+  }
+}
+function tick() {
+  for (const t of [...typing]) t.step();
+  if (!typing.size) { clearInterval(typeTimer); typeTimer = null; }
+}
+function finishAll() { for (const e of rows.values()) { e.en.finish(); e.zh.finish(); } }
+
+const paras = [];
+const PARA_GAP = 4, PARA_SENTENCES = 6, PARA_CHARS = 420, PARA_SECONDS = 50;
+function newPara(start) {
+  const el = document.createElement('section');
+  el.className = 'para';
+  el.innerHTML = '<span class="t"></span><p class="en" lang="en"></p><p class="zh" lang="zh-CN"></p>';
+  el.querySelector('.t').textContent = clock(start);
+  $('lines').append(el);
+  const p = {el, en: el.querySelector('.en'), zh: el.querySelector('.zh'), ids: [], start};
+  paras.push(p);
+  return p;
+}
+function paraFor(data) {
+  const p = paras[paras.length - 1];
+  if (!p) return newPara(data.start);
+  const prev = rows.get(p.ids[p.ids.length - 1]);
+  if (!prev) return p;
+  const chars = p.ids.reduce((n, id) => n + (rows.get(id)?.data.source.length || 0), 0);
+  const ended = prev.data.final && /[.!?]["')\]]*$/.test(prev.data.source || '');
+  if (num(data.start) - num(prev.data.end) > PARA_GAP && prev.data.final) return newPara(data.start);
+  if (ended && (p.ids.length >= PARA_SENTENCES || chars >= PARA_CHARS || num(data.start) - p.start >= PARA_SECONDS)) return newPara(data.start);
+  if (chars >= PARA_CHARS * 1.6) return newPara(data.start);
+  return p;
+}
 function upsertLine(data) {
   if (!data.id) return;
   let entry = rows.get(data.id);
   if (!entry) {
-    const li = document.createElement('li');
-    li.className = 'line';
-    li.innerHTML = '<span class="t"></span><div class="en" lang="en"></div><div class="zh" lang="zh-CN"></div><button type="button" class="retry" hidden>重新翻译这句</button>';
-    li.querySelector('.retry').onclick = () => retry(data.id, li.querySelector('.retry'));
-    $('lines').append(li);
-    entry = {li, data};
+    const para = paraFor(data);
+    const enEl = document.createElement('span');
+    const zhEl = document.createElement('span');
+    const zhText = document.createElement('span');
+    const btn = document.createElement('button');
+    enEl.className = zhEl.className = 's';
+    enEl.dataset.id = zhEl.dataset.id = data.id;
+    btn.type = 'button'; btn.className = 'retry'; btn.hidden = true; btn.textContent = '↻ 重新翻译';
+    zhEl.append(zhText, btn);
+    para.en.append(enEl);
+    para.zh.append(zhEl);
+    para.ids.push(data.id);
+    entry = {data, para, enEl, zhEl, btn, shownZh: ''};
+    entry.en = new Typer(enEl);
+    entry.zh = new Typer(zhText, text => { if (text && current && ACTIVE.has(current.state)) $('sr-live').textContent = text; });
+    btn.onclick = () => retry(data.id, btn);
     rows.set(data.id, entry);
-    while (rows.size > MAX_LINES) {
-      const [key, old] = rows.entries().next().value;
-      old.li.remove();
-      rows.delete(key);
-    }
+    while (rows.size > MAX_LINES) dropOldest();
   }
   entry.data = data;
   paint(entry);
-  ageLines();
+  updateCaret();
   $('live-empty').hidden = true;
 }
-function paint({li, data}) {
+function dropOldest() {
+  const [key, old] = rows.entries().next().value;
+  old.en.finish(); old.zh.finish();
+  old.enEl.remove(); old.zhEl.remove();
+  rows.delete(key);
+  old.para.ids = old.para.ids.filter(id => id !== key);
+  if (!old.para.ids.length) { old.para.el.remove(); paras.splice(paras.indexOf(old.para), 1); }
+}
+// 新识别出的文字没有译文时，保留上一次的中文，绝不退回“翻译中”
+function paint(entry) {
+  const {data} = entry;
   const zhText = typeof data.translation === 'string' ? data.translation.trim() : '';
-  const matched = !!zhText && data.translated_revision != null && data.translated_revision === data.revision;
-  const failed = !!data.translation_error && !matched;
-  const settled = data.final && matched;
-  li.className = 'line' + (!zhText ? (failed ? ' failed' : ' waiting') : settled ? '' : ' draft') + (li.classList.contains('old') ? ' old' : '');
-  li.querySelector('.t').textContent = clock(data.start);
-  li.querySelector('.en').textContent = data.source || '';
-  li.querySelector('.zh').textContent = zhText || (failed ? '这句没翻译出来' : '翻译中…');
-  li.title = failed ? '翻译失败：' + data.translation_error : '';
-  const btn = li.querySelector('.retry');
-  btn.hidden = !failed || current?.state !== 'running';
-  btn.disabled = false;
-  btn.textContent = '重新翻译这句';
+  if (zhText) entry.shownZh = zhText;
+  const failed = !!data.translation_error && !zhText && !entry.shownZh;
+  entry.en.set(data.source || '');
+  entry.zh.set(entry.shownZh);
+  entry.zhEl.classList.toggle('failed', failed);
+  entry.zhEl.title = data.translation_error ? '翻译失败：' + data.translation_error : '';
+  entry.btn.hidden = !failed || current?.state !== 'running';
+  if (entry.btn.hidden) { entry.btn.disabled = false; entry.btn.textContent = '↻ 重新翻译'; }
 }
 function repaintAll() { for (const e of rows.values()) paint(e); }
-// 跟随最新内容时，较早的句子稍微变淡，让视线落在最新几句上
-function ageLines() {
-  const dim = following && current && ACTIVE.has(current.state);
-  const list = [...rows.values()];
-  list.forEach(({li}, i) => li.classList.toggle('old', dim && i < list.length - 4));
+// 最后一段还有句子在等中文时，在中文末尾显示一个闪烁光标，代替“翻译中”
+const caret = document.createElement('i');
+caret.className = 'caret';
+caret.setAttribute('aria-hidden', 'true');
+function updateCaret() {
+  const p = paras[paras.length - 1];
+  const waiting = p && current && ACTIVE.has(current.state) && p.ids.some(id => !rows.get(id)?.shownZh);
+  if (waiting) { if (caret.parentNode !== p.zh) p.zh.append(caret); }
+  else caret.remove();
 }
+// 鼠标指向一句时，中英对应一起高亮
+$('lines').addEventListener('mouseover', e => {
+  const s = e.target.closest('.s');
+  document.querySelectorAll('.s.hl').forEach(x => x.classList.remove('hl'));
+  if (s) document.querySelectorAll('.s[data-id="' + s.dataset.id + '"]').forEach(x => x.classList.add('hl'));
+});
+$('lines').addEventListener('mouseleave', () => document.querySelectorAll('.s.hl').forEach(x => x.classList.remove('hl')));
 async function retry(id, btn) {
   btn.disabled = true;
   btn.textContent = '已提交…';
   try { await post('/api/retry/' + encodeURIComponent(id)); btn.textContent = '已重新排队'; }
-  catch (e) { btn.disabled = false; btn.textContent = '重新翻译这句'; flash(e.message); }
+  catch (e) { btn.disabled = false; btn.textContent = '↻ 重新翻译'; flash(e.message); }
+}
+function resetLines() {
+  for (const e of rows.values()) { e.en.finish(); e.zh.finish(); }
+  rows.clear();
+  paras.length = 0;
+  caret.remove();
+  $('lines').replaceChildren();
 }
 
 /* ---------- 滚动：默认跟随，往上翻就暂停，一键回来 ---------- */
@@ -315,44 +432,46 @@ function toEnd(smooth) {
   $('jump').hidden = true;
   autoScrollUntil = Date.now() + (smooth ? 600 : 80);
   scroller.scrollTo({top: scroller.scrollHeight, behavior: smooth ? 'smooth' : 'auto'});
-  ageLines();
 }
-function keepFollowing() { if (following && view === 'live') toEnd(false); else if (!following) $('jump').hidden = false; }
+// 内容一长高（逐字出现时也是），跟随状态下就滚到底
+new ResizeObserver(() => {
+  if (view !== 'live') return;
+  if (following) toEnd(false); else if (rows.size) $('jump').hidden = false;
+}).observe($('lines'));
 scroller.addEventListener('scroll', () => {
   if (Date.now() < autoScrollUntil) return;
-  const was = following;
   following = nearEnd();
   $('jump').hidden = following;
-  if (was !== following) ageLines();
 }, {passive: true});
 $('jump').onclick = () => toEnd(true);
 
 /* ---------- 状态与数据 ---------- */
 function applyStatus(s) {
   const prev = current;
-  if (prev && prev.id !== s.id) { rows.clear(); $('lines').replaceChildren(); }
+  if (prev && prev.id !== s.id) resetLines();
   current = s;
   const nowActive = ACTIVE.has(s.state);
   if (nowActive && view !== 'live') show('live');
-  if (!prev || prev.state !== s.state) { repaintAll(); ageLines(); }
+  if (!prev || prev.state !== s.state) repaintAll();
   if (prev && ACTIVE.has(prev.state) && !nowActive) { disarmStop(); loadHistory(); }
   renderLive();
+  updateCaret();
   if (view === 'start') renderStart();
 }
 function snapshot(status, segments) {
-  rows.clear();
-  $('lines').replaceChildren();
+  resetLines();
   current = null;
+  animate = false;
   if (status) applyStatus(status);
   for (const seg of segments || []) upsertLine(seg);
+  animate = true;
   if (current) renderLive();
   if (view === 'live') toEnd(false);
   else renderStart();
 }
 function clearSession() {
   current = null;
-  rows.clear();
-  $('lines').replaceChildren();
+  resetLines();
   if (view === 'live') show('start');
 }
 
@@ -443,25 +562,32 @@ showModel();
 
 /* ---------- 阅读设置 ---------- */
 function applyPrefs() {
-  document.documentElement.style.setProperty('--zh', SIZES[pref.size] + 'px');
+  const root = document.documentElement.style;
+  root.setProperty('--zh', SIZES[pref.zh] + 'px');
+  root.setProperty('--en', SIZES[pref.en] + 'px');
   $('lines').classList.toggle('zh-only', pref.zhOnly);
   $('zh-only').setAttribute('aria-pressed', String(pref.zhOnly));
-  $('size-down').disabled = pref.size === 0;
-  $('size-up').disabled = pref.size === SIZES.length - 1;
+  for (const k of ['zh', 'en']) {
+    $(k + '-val').textContent = SIZES[pref[k]];
+    $(k + '-down').disabled = pref[k] === 0;
+    $(k + '-up').disabled = pref[k] === SIZES.length - 1;
+  }
+  $('en-down').disabled ||= pref.zhOnly;
+  $('en-up').disabled ||= pref.zhOnly;
 }
-function setSize(delta) {
-  pref.size = clampSize(pref.size + delta);
-  localStorage.setItem('tk.size', String(pref.size));
+function setSize(k, delta) {
+  pref[k] = clampSize(pref[k] + delta);
+  localStorage.setItem(k === 'zh' ? 'tk.zhSize' : 'tk.enSize', String(pref[k]));
   applyPrefs();
-  if (following) toEnd(false);
 }
-$('size-down').onclick = () => setSize(-1);
-$('size-up').onclick = () => setSize(1);
+for (const k of ['zh', 'en']) {
+  $(k + '-down').onclick = () => setSize(k, -1);
+  $(k + '-up').onclick = () => setSize(k, 1);
+}
 $('zh-only').onclick = () => {
   pref.zhOnly = !pref.zhOnly;
   localStorage.setItem('tk.zhOnly', pref.zhOnly ? '1' : '0');
   applyPrefs();
-  if (following) toEnd(false);
 };
 function togglePop(open) {
   const want = open ?? $('info').hidden;
@@ -473,8 +599,8 @@ document.addEventListener('click', e => { if (!$('info').hidden && !e.target.clo
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { togglePop(false); if (stopArmed) { disarmStop(); renderLive(); } }
   if (view !== 'live' || e.target.closest('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === '+' || e.key === '=') setSize(1);
-  else if (e.key === '-') setSize(-1);
+  if (e.key === '+' || e.key === '=') setSize('zh', 1);
+  else if (e.key === '-') setSize('zh', -1);
   else if (e.key === 'End') toEnd(true);
 });
 
@@ -501,7 +627,7 @@ function connect() {
     let data;
     try { data = JSON.parse(ev.data); } catch { socket.close(); return; }
     if (data.type === 'snapshot') snapshot(data.status, data.segments);
-    else if (data.type === 'segment') { upsertLine(data); keepFollowing(); if (current) renderLive(); }
+    else if (data.type === 'segment') { upsertLine(data); if (current) renderLive(); }
     else if (data.type === 'status') applyStatus(data);
     else if (data.type === 'error') flash(data.message || '本机处理出了点问题。');
   };
@@ -524,6 +650,7 @@ async function init(first = false) {
   }
 }
 document.addEventListener('visibilitychange', () => {
+  finishAll();
   if (!document.hidden && (!ws || ws.readyState === WebSocket.CLOSED) && !reconnectTimer) init();
 });
 

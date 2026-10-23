@@ -86,9 +86,17 @@
     </div>
     <div class="bar-right">
       <button id="zh-only" type="button" class="tool" aria-pressed="false" title="只显示中文">只看中文</button>
-      <span class="size-group" role="group" aria-label="字号">
-        <button id="size-down" type="button" class="tool" aria-label="缩小字号">A−</button>
-        <button id="size-up" type="button" class="tool" aria-label="放大字号">A+</button>
+      <span class="size-group" role="group" aria-label="中文字号">
+        <span class="size-label" aria-hidden="true">中</span>
+        <button id="zh-down" type="button" class="tool sz" aria-label="中文缩小">−</button>
+        <span id="zh-val" class="size-val" aria-live="polite"></span>
+        <button id="zh-up" type="button" class="tool sz" aria-label="中文放大">+</button>
+      </span>
+      <span class="size-group" role="group" aria-label="英文字号">
+        <span class="size-label" aria-hidden="true">英</span>
+        <button id="en-down" type="button" class="tool sz" aria-label="英文缩小">−</button>
+        <span id="en-val" class="size-val" aria-live="polite"></span>
+        <button id="en-up" type="button" class="tool sz" aria-label="英文放大">+</button>
       </span>
       <div class="pop-wrap">
         <button id="info-btn" type="button" class="tool" aria-expanded="false" aria-controls="info" title="运行详情">详情</button>
@@ -102,7 +110,7 @@
             <dt>声音来源</dt><dd id="i-source">—</dd>
             <dt>句子</dt><dd id="i-count">—</dd>
           </dl>
-          <p class="pop-legend"><span class="sw sw-draft"></span>灰色＝还在听，可能会改<br><span class="sw sw-done"></span>深色＝已确认</p>
+          <p class="pop-legend">字幕边听边出，几句合成一段。<br>译文被修正时会慢慢淡入新内容，不会闪。<br>鼠标指向一句，中英对应会一起高亮。</p>
           <div class="pop-links"><a id="dl-txt-live">下载双语文本</a><a id="dl-srt-live">下载字幕 SRT</a></div>
         </div>
       </div>
@@ -114,7 +122,8 @@
 
   <main id="scroller" class="scroller" tabindex="0" aria-label="字幕，最新的在最下面">
     <div id="live-empty" class="live-empty"><div class="pulse" aria-hidden="true"><i></i><i></i><i></i></div><p id="live-empty-text">正在准备…</p></div>
-    <ol id="lines" class="lines" aria-live="polite" aria-relevant="additions text"></ol>
+    <div id="lines" class="lines"></div>
+    <div id="sr-live" class="sr-only" aria-live="polite"></div>
   </main>
 
   <button id="jump" type="button" class="jump" hidden>↓ 回到最新</button>
