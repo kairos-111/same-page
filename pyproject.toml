@@ -1,0 +1,14 @@
+[project]
+name = "classroom-local-translator"
+version = "0.1.0"
+description = "Offline English to Chinese classroom captions for Apple Silicon"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "whisperlivekit[mlx-whisper]==0.2.26",
+  "imageio-ffmpeg>=0.6.0",
+  "psutil>=7.0",
+  "httpx>=0.28,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

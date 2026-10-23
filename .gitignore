@@ -1,0 +1,10 @@
+work/
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+outputs/sessions/
+outputs/*.png
+outputs/*.log
+outputs/native/
+outputs/验收报告.json
