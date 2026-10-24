@@ -119,6 +119,19 @@ def ended_class(session_id):
     except ValueError as exc:
         raise HTTPException(409,str(exc))
 
+@app.get('/api/sessions/{session_id}')
+def read_class(session_id:str):
+    path=ended_class(session_id)
+    try:
+        metadata=json.loads((path/'session.json').read_text())
+        segments=SessionStore.load_segments(path)
+    except (OSError,ValueError):raise HTTPException(404,'课堂记录无法读取')
+    # Presentation-only normalization for interrupted legacy metadata; never rewrite it.
+    status=dict(metadata,historical=True,has_recording=bool(audio_files(path)),
+                final_count=sum(bool(x.get('final')) for x in segments))
+    if status.get('state') in ('loading','running','draining'):status['state']='interrupted'
+    return dict(session=status,segments=segments)
+
 @app.post('/api/sessions/{session_id}/recording/reveal')
 async def reveal(session_id:str):
     async with session_lock:

@@ -7,7 +7,7 @@ for (const id of ['recording-dialog', 'recording-error', 'recording-keep', 'reco
 nodes['recording-dialog'] = {open: false, showModal() {this.open = true;}, close() {this.open = false;}};
 const calls = [];
 const context = { $: id => nodes[id], ACTIVE: new Set(['loading', 'running', 'draining']), num: Number,
-  recordingPrompted: new Set(), recordingDialogId: null, current: null,
+  recordingPrompted: new Set(), recordingDialogId: null, current: null, viewingHistory: false,
   post: async (url, body) => { calls.push([url, body]); },
   getJSON: async () => ({session: null}), loadHistory: async () => {}, applyStatus() {} };
 vm.createContext(context);
@@ -28,5 +28,6 @@ context.openRecordingChoice(s.id);
   assert.equal(calls[0][0], '/api/sessions/fake-class/recording');
   assert.equal(calls[0][1].keep, false);
   assert.equal(nodes['recording-dialog'].open, false);
+  assert.equal(nodes['recording-error'].textContent, '');
   console.log('recording prompt timing, defer and discard choice passed');
 })().catch(e => {console.error(e); process.exitCode = 1;});

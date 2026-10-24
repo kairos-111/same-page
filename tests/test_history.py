@@ -126,3 +126,27 @@ class SavingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session.state,'completed')
             self.assertTrue(session.status()['saved'])
             self.assertEqual(session.status()['recording_decision'],'pending')
+
+class HistoryReaderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_read_full_saved_class_without_mutation(self):
+        from classroom.store import SessionStore
+        with tempfile.TemporaryDirectory() as root:
+            sessions=Path(root)
+            store=SessionStore(sessions/SID,dict(id=SID,title='合成历史课',state='loading',audio_seconds=600))
+            for i in range(620):
+                store.append(dict(type='segment',id=f's{i:06}',start=i,end=i+1,revision=1,source=f'Line {i}',translation='中文',translated_revision=1,final=True))
+            store.append(dict(type='segment',id='s000000',start=0,end=1,revision=2,source='Revised first line',translation='修订中文',translated_revision=2,final=True))
+            store.close()
+            original=(store.path/'session.json').read_bytes()
+            with patch('classroom.app.SESSIONS',sessions),patch('classroom.app.active',None):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://127.0.0.1:8767') as client:
+                    response=await client.get('/api/sessions/'+SID)
+                    self.assertEqual(response.status_code,200)
+                    data=response.json()
+                    self.assertEqual(len(data['segments']),620)
+                    self.assertEqual(data['segments'][0]['source'],'Revised first line')
+                    self.assertTrue(data['session']['historical'])
+                    self.assertEqual(data['session']['state'],'interrupted')
+                    self.assertEqual((await client.get('/api/sessions/20261024-120000-ffffffff')).status_code,404)
+                self.assertEqual((store.path/'session.json').read_bytes(),original)
+                self.assertFalse((store.path/'双语记录.txt').exists())

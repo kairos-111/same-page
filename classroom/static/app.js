@@ -24,6 +24,8 @@ let everConnected = false;
 let ws = null;
 let reconnectTimer = null;
 let reconnectDelay = 1500;
+let viewingHistory = false;
+let openingHistory = 0;
 let current = null;       // 当前会话状态
 let view = 'start';
 let pending = '';         // 'upload' | 'start' | 'stop'
@@ -73,7 +75,7 @@ function show(next) {
   $('live-view').hidden = next !== 'live';
   document.title = next === 'live' && current ? (current.title || '课堂') + ' · 听课' : '听课';
   if (next === 'start') { renderStart(); loadHistory(); }
-  else { finishAll(); renderLive(); requestAnimationFrame(() => toEnd(false)); }
+  else { finishAll(); renderLive(); requestAnimationFrame(() => { if (viewingHistory) { following = false; scroller.scrollTop = 0; } else toEnd(false); }); }
 }
 
 /* ---------- 开始页 ---------- */
@@ -148,8 +150,9 @@ function historyRow(item) {
   const li = document.createElement('li');
   const main = document.createElement('div');
   main.className = 'h-main';
-  const title = document.createElement('span');
-  title.className = 'h-title';
+  const title = document.createElement('button');
+  title.type = 'button'; title.className = 'h-title h-open';
+  title.onclick = () => openHistory(item.id, !!item.busy);
   title.textContent = item.title || '课堂记录';
   const meta = document.createElement('span');
   meta.className = 'h-meta';
@@ -198,7 +201,10 @@ function historyRow(item) {
       await loadHistory();
     } catch (e) { flash(e.message); remove.disabled = false; }
   };
-  actions.append(recording);
+  const read = document.createElement('button');
+  read.type = 'button'; read.textContent = '查看字幕';
+  read.onclick = () => openHistory(item.id, !!isLive);
+  actions.append(read, recording);
   if (!isLive && item.has_recording && item.recording_decision === 'pending') {
     const choice = document.createElement('button');
     choice.type = 'button'; choice.textContent = '保留录音？';
@@ -209,9 +215,29 @@ function historyRow(item) {
   return li;
 }
 
+async function openHistory(id, busy = false) {
+  const request = ++openingHistory;
+  try {
+    const data = await getJSON(busy ? '/api/state' : '/api/sessions/' + encodeURIComponent(id));
+    if (request !== openingHistory) return;
+    viewingHistory = !busy;
+    snapshot(data.session, data.segments);
+    show('live');
+  } catch (e) { flash(e.message || '无法打开这堂课的字幕'); }
+}
+async function leaveHistory() {
+  if (!viewingHistory) { show('start'); return; }
+  try {
+    const data = await getJSON('/api/state');
+    viewingHistory = false;
+    if (data.session) snapshot(data.session, data.segments); else clearSession();
+    show('start');
+  } catch (e) { flash(e.message || '暂时无法返回，请稍后重试'); }
+}
+
 /* ---------- 课后录音选择 ---------- */
 function maybePromptRecording(s) {
-  if (!s || ACTIVE.has(s.state) || !s.saved || s.recording_decision !== 'pending' || !num(s.audio_seconds)) return;
+  if (!s || s.historical || ACTIVE.has(s.state) || !s.saved || s.recording_decision !== 'pending' || !num(s.audio_seconds)) return;
   if (recordingPrompted.has(s.id) || $('recording-dialog').open) return;
   openRecordingChoice(s.id);
 }
@@ -229,7 +255,10 @@ async function chooseRecording(keep) {
     await post('/api/sessions/' + encodeURIComponent(id) + '/recording', {keep});
     $('recording-dialog').close();
     const data = await getJSON('/api/state');
-    if (data.session) applyStatus(data.session);
+    if (viewingHistory && current?.id === id) {
+      const historical = await getJSON('/api/sessions/' + encodeURIComponent(id));
+      current = historical.session; renderLive();
+    } else if (data.session && !viewingHistory) applyStatus(data.session);
     await loadHistory();
   } catch (e) { $('recording-error').textContent = e.message; }
   finally { buttons.forEach(b => { b.disabled = false; }); }
@@ -254,7 +283,7 @@ function renderLive() {
   if (!s) return;
   const active = ACTIVE.has(s.state);
   $('rec').className = 'rec ' + ({running: 'on', loading: 'busy', draining: 'busy', completed: 'ok'}[s.state] || 'bad');
-  $('live-state').textContent = STATE_LABEL[s.state] || '—';
+  $('live-state').textContent = viewingHistory ? '历史字幕' : STATE_LABEL[s.state] || '—';
   $('live-clock').textContent = clock(s.audio_seconds);
   $('live-title').textContent = s.title || '课堂记录';
   if (view === 'live') document.title = (s.title || '课堂') + ' · 听课';
@@ -297,6 +326,8 @@ function renderLive() {
   }
   $('recording-choice').hidden = active || !s.saved || s.recording_decision !== 'pending' || !num(s.audio_seconds);
   maybePromptRecording(s);
+  $('new-class').textContent = viewingHistory ? '返回历史记录' : '开始新的一堂课';
+  $('jump').textContent = viewingHistory ? '↓ 到最后' : '↓ 回到最新';
   renderBanner();
 }
 function renderBanner() {
@@ -436,7 +467,7 @@ function upsertLine(data) {
     entry.zh = new Typer(zhText, text => { if (text && current && ACTIVE.has(current.state)) $('sr-live').textContent = text; });
     btn.onclick = () => retry(data.id, btn);
     rows.set(data.id, entry);
-    while (rows.size > MAX_LINES) dropOldest();
+    while (!viewingHistory && rows.size > MAX_LINES) dropOldest();
   }
   entry.data = data;
   paint(entry);
@@ -553,8 +584,8 @@ function snapshot(status, segments) {
   for (const seg of segments || []) upsertLine(seg);
   animate = true;
   if (current) renderLive();
-  if (view === 'live') toEnd(false);
-  else renderStart();
+  if (view === 'live' && !viewingHistory) toEnd(false);
+  else if (view === 'start') renderStart();
 }
 function clearSession() {
   current = null;
@@ -612,9 +643,9 @@ $('start').onclick = async () => {
     renderStart();
   }
 };
-$('new-class').onclick = () => { startNote = {text: '', error: false}; show('start'); $('title').focus(); };
+$('new-class').onclick = async () => { startNote = {text: '', error: false}; await leaveHistory(); $('title').focus(); };
 $('last-open').onclick = () => show('live');
-$('back').onclick = () => show('start');
+$('back').onclick = leaveHistory;
 
 document.querySelectorAll('.source').forEach(el => { el.onclick = () => selectSource(el.dataset.source); });
 $('file').onchange = showFile;
@@ -713,6 +744,7 @@ function connect() {
     if (ws !== socket) return;
     let data;
     try { data = JSON.parse(ev.data); } catch { socket.close(); return; }
+    if (viewingHistory) return; // Live events must not overwrite an archived class.
     if (data.type === 'snapshot') { if (data.status) snapshot(data.status, data.segments); else { clearSession(); renderStart(); loadHistory(); } }
     else if (data.type === 'segment') { upsertLine(data); if (current) renderLive(); }
     else if (data.type === 'status') applyStatus(data);
@@ -726,8 +758,10 @@ async function init(first = false) {
     const data = await getJSON('/api/state', {signal: AbortSignal.timeout(10000)});
     token = data.token;
     ready = !!data.ready;
-    if (data.session) snapshot(data.session, data.segments);
-    else clearSession();
+    if (!viewingHistory) {
+      if (data.session) snapshot(data.session, data.segments);
+      else clearSession();
+    }
     if (first) show(current && ACTIVE.has(current.state) ? 'live' : 'start');
     if (!ws || ws.readyState > WebSocket.OPEN) connect();
     else setConnected(true);

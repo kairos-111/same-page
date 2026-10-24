@@ -256,3 +256,6 @@ h1 { font-size: 32px; line-height: 1.25; margin: 0 0 10px; font-weight: 700; let
 #recording-dialog p { line-height: 1.7; }
 #recording-error { color: #bc3434; }
 .recording-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+
+.h-open { display: block; border: 0; padding: 0; background: transparent; text-align: left; color: var(--ink); cursor: pointer; }
+.h-open:hover { color: var(--accent); text-decoration: underline; }
