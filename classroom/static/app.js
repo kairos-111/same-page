@@ -71,11 +71,13 @@ function post(path, body) {
 /* ---------- 视图切换 ---------- */
 function show(next) {
   view = next;
+  document.documentElement.classList.toggle('subtitle-open', next === 'live');
+  if (next === 'live') window.scrollTo(0, 0);
   $('start-view').hidden = next !== 'start';
   $('live-view').hidden = next !== 'live';
   document.title = next === 'live' && current ? (current.title || '课堂') + ' · 听课' : '听课';
   if (next === 'start') { renderStart(); loadHistory(); }
-  else { finishAll(); renderLive(); requestAnimationFrame(() => { if (viewingHistory) { following = false; scroller.scrollTop = 0; } else toEnd(false); }); }
+  else { finishAll(); renderLive(); requestAnimationFrame(() => { if (viewingHistory) { following = false; scroller.scrollTop = 0; $('jump').hidden = nearEnd(); } else toEnd(false); }); }
 }
 
 /* ---------- 开始页 ---------- */
@@ -282,6 +284,7 @@ function renderLive() {
   const s = current;
   if (!s) return;
   const active = ACTIVE.has(s.state);
+  $('live-view').classList.toggle('history-reading', viewingHistory);
   $('rec').className = 'rec ' + ({running: 'on', loading: 'busy', draining: 'busy', completed: 'ok'}[s.state] || 'bad');
   $('live-state').textContent = viewingHistory ? '历史字幕' : STATE_LABEL[s.state] || '—';
   $('live-clock').textContent = clock(s.audio_seconds);
@@ -554,7 +557,7 @@ function toEnd(smooth) {
 // 内容一长高（逐字出现时也是），跟随状态下就滚到底
 new ResizeObserver(() => {
   if (view !== 'live') return;
-  if (following) toEnd(false); else if (rows.size) $('jump').hidden = false;
+  if (following) toEnd(false); else $('jump').hidden = !rows.size || nearEnd();
 }).observe($('lines'));
 scroller.addEventListener('scroll', () => {
   if (Date.now() < autoScrollUntil) return;
@@ -562,6 +565,11 @@ scroller.addEventListener('scroll', () => {
   $('jump').hidden = following;
 }, {passive: true});
 $('jump').onclick = () => toEnd(true);
+
+new ResizeObserver(() => {
+  const height = $('done').hidden ? 0 : $('done').getBoundingClientRect().height;
+  $('live-view').style.setProperty('--footer-height', height + 'px');
+}).observe($('done'));
 
 /* ---------- 状态与数据 ---------- */
 function applyStatus(s) {

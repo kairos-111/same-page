@@ -143,7 +143,8 @@ h1 { font-size: 32px; line-height: 1.25; margin: 0 0 10px; font-weight: 700; let
 }
 
 /* ---------- 上课页 ---------- */
-#live-view { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+#live-view { position: fixed; inset: 0; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+html.subtitle-open, html.subtitle-open body { overflow: hidden; }
 .bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); }
 .bar-left, .bar-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .bar-right { flex: none; gap: 6px; }
@@ -187,7 +188,7 @@ h1 { font-size: 32px; line-height: 1.25; margin: 0 0 10px; font-weight: 700; let
 .banner.error { background: var(--err-bg); color: var(--err-ink); }
 .banner.info { background: var(--accent-soft); color: var(--accent); }
 
-.scroller { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.scroller { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .scroller:focus { outline: none; }
 .lines { max-width: 1440px; margin: 0 auto; padding: 14px 24px 40vh; }
 .para { display: grid; grid-template-columns: 42px minmax(0, 1fr) minmax(0, 1fr); column-gap: 28px; padding: 12px 0; }
@@ -219,8 +220,8 @@ h1 { font-size: 32px; line-height: 1.25; margin: 0 0 10px; font-weight: 700; let
 .pulse i:nth-child(3) { animation-delay: .3s; }
 @keyframes dot { 0%, 100% { opacity: .25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-4px); } }
 
-.jump { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 5; height: 40px; padding: 0 18px; border: 0; border-radius: 20px; background: var(--ink); color: var(--bg); font-size: 14px; font-weight: 600; box-shadow: 0 8px 22px rgba(0,0,0,.18); }
-#live-view:has(.done:not([hidden])) .jump { bottom: 100px; }
+.jump { position: absolute; left: 50%; bottom: calc(var(--footer-height, 0px) + 24px); transform: translateX(-50%); z-index: 5; height: 40px; padding: 0 18px; border: 0; border-radius: 20px; background: var(--ink); color: var(--bg); font-size: 14px; font-weight: 600; box-shadow: 0 8px 22px rgba(0,0,0,.18); }
+#live-view.history-reading .lines { padding-bottom: 24px; }
 
 .done { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 24px; border-top: 1px solid var(--line); background: var(--card); }
 .done-text { display: flex; flex-direction: column; gap: 2px; }
