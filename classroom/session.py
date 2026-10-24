@@ -7,10 +7,11 @@ from pathlib import Path
 import time
 import uuid
 import psutil
+import httpx
 from .paths import OUTPUTS,SESSIONS,LLAMA_URL
 from .store import SessionStore
 from .subtitles import SegmentComposer
-from .translation import Glossary,LocalTranslator,RevisionQueue,apply_translation
+from .translation import Glossary,LocalTranslator,RevisionQueue,apply_translation,preview_due,validate_translation,critical_signature
 from .process import terminate_and_drain
 
 class ClassSession:
@@ -35,7 +36,7 @@ class ClassSession:
         self.processed=0
         self.level=0
         self.last_input=time.monotonic()
-        self.preview_times={}
+        self.dispatched={}
         self.first_latency=[]
         self.first_seen=set()
         self.final_latency=[]
@@ -45,12 +46,15 @@ class ClassSession:
         self.orchestrator=None
         self.glossary=Glossary(OUTPUTS/'课程术语.csv')
         self.translator=LocalTranslator(LLAMA_URL,self.glossary)
+        self.metrics_finished_at=None
         self.last_segment=None
         self.inflight=None
         self.asr_unresolved=0
+        self.inflight_item=None
+        self.inflight_started=None
 
     def event(self,obj,persist=True):
-        obj={**obj,'wall_time':time.time()}
+        obj={**obj,'session_id':self.id,'session_elapsed':time.monotonic()-self.clock,'wall_time':time.time()}
         if persist:self.store.append(obj)
         for q in tuple(self.clients):
             if q.full():
@@ -61,7 +65,9 @@ class ClassSession:
             else:q.put_nowait(obj)
 
     def status(self):
-        oldest=min((x.get('queued_at',time.monotonic()) for x in self.queue.pending.values()),default=time.monotonic())
+        now=self.metrics_finished_at or time.monotonic()
+        oldest=min((x.get('queued_at',now) for x in self.queue.pending.values()),default=now)
+        behind=[x for x in self.segments.values() if x.get('translated_revision')!=x['revision']]
         processes=[psutil.Process()]
         try:processes+=processes[0].children(recursive=True)
         except psutil.Error:pass
@@ -71,8 +77,14 @@ class ClassSession:
             except psutil.Error:pass
         return dict(type='status',id=self.id,title=self.title,state=self.state,error=self.error,
             audio_seconds=self.store.audio.seconds,asr_lag=max(0,self.store.audio.seconds-self.processed),
-            translation_queue=len(self.queue.pending),translation_wait=max(0,time.monotonic()-oldest),
+            translation_queue=len(self.queue.pending),translation_wait=max(0,now-oldest),
             translation_busy=self.inflight is not None,
+            translation_execution_age=max(0,now-self.inflight_started) if self.inflight_started is not None else 0,
+            translation_inflight_revision=self.inflight_item['revision'] if self.inflight_item else None,
+            translation_inflight_id=self.inflight,
+            chinese_pending=len(behind),
+            chinese_lag=max((now-x['unmatched_since'] for x in behind),default=0),
+            finalization_wait=max((now-x['first_seen_at'] for x in self.segments.values() if not x['final']),default=0),
             level=round(self.level,4),input_idle=round(time.monotonic()-self.last_input,1),
             memory_bytes=rss,source=self.source,model=self.model,
             asr_unresolved=self.asr_unresolved,
@@ -94,6 +106,7 @@ class ClassSession:
             await asyncio.gather(self.source_task,self.asr_task)
             self.queue.close()
             await self.translation_task
+            self.audit_translations()
             self.state='completed' if not self.error else 'error'
         except asyncio.CancelledError:
             self.state='interrupted'
@@ -109,6 +122,8 @@ class ClassSession:
                 # FFmpeg may have filled stdout while paced playback was cancelled.
                 # Drain both pipes; wait() alone can hang even after the child exits.
                 await terminate_and_drain(self.source_process)
+            self.audit_translations()
+            self.metrics_finished_at=time.monotonic()
             self.store.audio.close()
             await self.translator.close()
             self.event(self.status())
@@ -120,6 +135,13 @@ class ClassSession:
             await asyncio.to_thread(self.store.audio.export_wav)
             self.store.close()
             self.asr=None
+
+    def audit_translations(self):
+        incomplete=[x['id'] for x in self.segments.values() if x['final'] and (not x.get('translation') or x.get('translated_revision')!=x['revision'])]
+        self.store.metadata['incomplete_translation_ids']=incomplete
+        if incomplete and not self.error:
+            self.error=f'{len(incomplete)} 句最终中文未完成；原声与修订已保留，可导入录音补处理'
+        return incomplete
 
     async def stop(self):
         if self.state=='loading':
@@ -231,7 +253,17 @@ class ClassSession:
             event['translated_revision']=old.get('translated_revision')
             if event['final'] and event['source']==old['source'] and old.get('translated_revision')==old['revision']:
                 event['translated_revision']=event['revision'];reuse=True
-        event['queued_at']=time.monotonic()
+        now=time.monotonic()
+        event['first_seen_at']=old['first_seen_at'] if old else now
+        event['source_updated_at']=now
+        event['unmatched_since']=old.get('unmatched_since',now) if old and old.get('translated_revision')!=old['revision'] else now
+        if event['final']:
+            event['finalized_at']=old.get('finalized_at',now) if old else now
+            event['finalization_seconds']=event['finalized_at']-event['first_seen_at']
+        # Keep readable evidence even when ASR diverges, with an explicit version mismatch.
+        if old and old.get('translation') and not event.get('translation'):
+            event['translation']=old['translation']
+            event['translated_revision']=old.get('translated_revision')
         self.segments[key]=event
         self.last_segment=event
         while len(self.segments)>500:
@@ -245,41 +277,90 @@ class ClassSession:
             if self.realtime:self.final_latency.append(max(0,time.monotonic()-self.clock-event['end']))
             self.queue.pending.pop(key,None)
             return
-        enough=len(event['source'].split())>=4
+        # Any queued revision is replaced only by the current eligible revision.
+        self.schedule(event)
+        if len(self.dispatched)>1000:
+            self.dispatched={k:v for k,v in self.dispatched.items() if k in self.segments}
+
+    def schedule(self,event):
+        key=event['id']
+        replaced=self.queue.pending.pop(key,None)
+        if replaced and replaced['revision']!=event['revision']:
+            self.event(dict(type='translation_attempt',id=key,revision=replaced['revision'],current_revision=event['revision'],outcome='superseded_pending',queue_seconds=time.monotonic()-replaced['queued_at']))
         now=time.monotonic()
-        lag=max(0,self.store.audio.seconds-self.processed)
-        wait=max((now-s.get('queued_at',now) for s in self.queue.pending.values()),default=0)
-        if event['final'] or (enough and lag<15 and wait<15 and now-self.preview_times.get(key,0)>=1):
-            self.preview_times[key]=now
-            self.queue.put(event)
-        if len(self.preview_times)>1000:self.preview_times={k:v for k,v in self.preview_times.items() if k in self.segments}
+        if event.get('translated_revision')==event['revision']:
+            return
+        if event['final'] or preview_due(event,self.dispatched.get(key),now):
+            # Never build speculative work behind a slow request. Finals and critical
+            # corrections are retained; ordinary previews can refresh on the next update.
+            overloaded=(self.inflight_started is not None and now-self.inflight_started>=5) or any(x['final'] for x in self.queue.pending.values())
+            previous=self.dispatched.get(key)
+            critical=critical_signature(event['source']) != critical_signature(previous['source'] if previous else '')
+            overloaded=overloaded or self.store.audio.seconds-self.processed>=15 or any(now-x['queued_at']>=15 for x in self.queue.pending.values())
+            if event['final'] or critical or not overloaded:
+                self.queue.put(event)
 
     async def translate(self):
         while (item:=await self.queue.get()) is not None:
+            latest=self.segments.get(item['id'])
+            if not latest or latest['revision']!=item['revision']:
+                self.event(dict(type='translation_attempt',id=item['id'],revision=item['revision'],outcome='superseded_before_start'))
+                continue
+            if latest.get('translated_revision')==latest['revision']:
+                continue
             started=time.monotonic()
+            if not item.get('retry') and not preview_due(item,self.dispatched.get(item['id']),started):
+                continue
             self.inflight=item['id']
+            self.inflight_item=item
+            self.inflight_started=started
+            self.dispatched[item['id']]=dict(item,dispatched_at=started)
+            timing=dict(id=item['id'],revision=item['revision'],final=item['final'],
+                queue_seconds=max(0,started-item['queued_at']),
+                revision_wait_seconds=max(0,started-item['source_updated_at']),
+                finalization_seconds=item.get('finalization_seconds'),
+                finalization_audio_lag=max(0,item['finalized_at']-self.clock-item['end']) if item['final'] and self.realtime else None)
+            self.event(dict(type='translation_attempt',**timing,outcome='started'))
+            outcome='error';message=''
             try:
-                text=await self.translator.translate(item['source'],list(self.context))
+                text=validate_translation(await self.translator.translate(item['source'],list(self.context)))
                 previous=self.segments.get(item['id'])
                 latest=apply_translation(previous,item,text)
-                if latest is None:continue
+                if latest is None:
+                    outcome='stale_discarded'
+                    continue
                 first=not previous.get('translation')
                 latest=dict(latest,translation_seconds=time.monotonic()-started)
                 latest['translation_audio_end']=item['end']
                 self.segments[item['id']]=latest
-                # Wall-clock lag is meaningful for real-time sources only.
                 latency=max(0,time.monotonic()-self.clock-item['end']) if self.realtime else None
                 if latency is not None:
                     if first and item['id'] not in self.first_seen:
                         self.first_latency.append(latency);self.first_seen.add(item['id'])
-                    if item['final']:self.final_latency.append(latency)
+                    if latest['final'] and latest.get('translated_revision')==latest['revision']:self.final_latency.append(latency)
                 if item['final']:self.context.append(item['source'])
+                outcome='applied_current' if latest['revision']==item['revision'] else 'applied_prefix'
                 self.event(latest)
+            except asyncio.CancelledError:
+                outcome='client_cancelled_compute_unconfirmed'
+                raise
             except Exception as e:
+                message=str(e) or type(e).__name__
+                if isinstance(e,httpx.TimeoutException):
+                    outcome='request_timeout_compute_unconfirmed'
+                    message='翻译请求超时；未确认模型计算已停止'
                 latest=self.segments.get(item['id'])
                 if latest and latest['revision']==item['revision']:
-                    latest=dict(latest,translation_error=str(e));self.segments[item['id']]=latest;self.event(latest)
-            finally:self.inflight=None
+                    latest=dict(latest,translation_error=message);self.segments[item['id']]=latest;self.event(latest)
+            finally:
+                self.event(dict(type='translation_attempt',**timing,outcome=outcome,error=message,
+                    execution_seconds=time.monotonic()-started,
+                    current_revision=self.segments.get(item['id'],{}).get('revision'),
+                    revision_age_seconds=time.monotonic()-item['source_updated_at'],
+                    audio_end_lag=max(0,time.monotonic()-self.clock-item['end']) if self.realtime else None))
+                self.inflight=None
+                self.inflight_item=None
+                self.inflight_started=None
 
     async def monitor(self):
         tick=0
@@ -293,4 +374,4 @@ class ClassSession:
 
     def retry(self,segment_id):
         item=self.segments.get(segment_id)
-        if item and item.get('asr_status') != 'unresolved':self.queue.put(item)
+        if item and item.get('asr_status') != 'unresolved':self.queue.put(dict(item,retry=True))

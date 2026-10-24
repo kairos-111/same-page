@@ -208,6 +208,9 @@ function renderLive() {
   $('i-lag').textContent = active ? num(s.asr_lag).toFixed(1) + ' 秒' : '—';
   $('i-queue').textContent = active ? num(s.translation_queue) + (s.translation_busy ? ' 句（1 句翻译中）' : ' 句') : '—';
   $('i-wait').textContent = active && num(s.translation_queue) ? num(s.translation_wait).toFixed(1) + ' 秒' : '—';
+  $('i-execution').textContent = active ? num(s.translation_execution_age).toFixed(1) + ' 秒' : '—';
+  $('i-chinese').textContent = s.chinese_pending == null ? '—' : num(s.chinese_pending) + ' 句 / ' + num(s.chinese_lag).toFixed(1) + ' 秒';
+  $('i-finalization').textContent = active ? num(s.finalization_wait).toFixed(1) + ' 秒' : '—';
   $('i-mem').textContent = s.memory_bytes ? (num(s.memory_bytes) / 1024 ** 3).toFixed(1) + ' GB' : '—';
   $('i-model').textContent = modelName(s.model);
   $('i-source').textContent = SOURCE_NAME[s.source] || '—';
@@ -239,8 +242,8 @@ function renderBanner() {
   else if (s?.state === 'draining') { text = '已停止收音，正在把最后几句处理完并保存，请稍等，不要关闭启动程序。'; kind = 'info'; }
   else if (s?.state === 'interrupted') { text = '会话中断了。已收到的声音保存在本机，可以用「已有录音」重新处理。'; kind = 'error'; }
   else if (s?.state === 'running' && num(s.input_idle) > 5) { text = '已经 ' + Math.round(num(s.input_idle)) + ' 秒没收到声音了。检查一下声音有没有在播放、输入设备或系统权限。'; kind = 'warn'; }
-  else if (s?.state === 'running' && (num(s.asr_lag) > 30 || num(s.translation_wait) > 30)) { text = '处理落后比较多，正在追。声音都在保存，不会丢。'; kind = 'warn'; }
-  else if (s?.state === 'running' && (num(s.asr_lag) > 15 || num(s.translation_wait) > 15)) { text = '字幕稍慢，正在追上…'; kind = 'warn'; }
+  else if (s?.state === 'running' && (num(s.asr_lag) > 30 || Math.max(num(s.translation_wait), num(s.chinese_lag)) > 30)) { text = '处理落后比较多，正在追。声音都在保存，不会丢。'; kind = 'warn'; }
+  else if (s?.state === 'running' && (num(s.asr_lag) > 15 || Math.max(num(s.translation_wait), num(s.chinese_lag)) > 15)) { text = '字幕稍慢，正在追上…'; kind = 'warn'; }
   b.hidden = !text;
   b.textContent = text;
   b.className = 'banner' + (kind && kind !== 'warn' ? ' ' + kind : '');
@@ -351,14 +354,16 @@ function upsertLine(data) {
     const zhEl = document.createElement('span');
     const zhText = document.createElement('span');
     const btn = document.createElement('button');
+    const stateLabel = document.createElement('small');
+    stateLabel.className = 'translation-state';
     enEl.className = zhEl.className = 's';
     enEl.dataset.id = zhEl.dataset.id = data.id;
     btn.type = 'button'; btn.className = 'retry'; btn.hidden = true; btn.textContent = '↻ 重新翻译';
-    zhEl.append(zhText, btn);
+    zhEl.append(zhText, stateLabel, btn);
     para.en.append(enEl);
     para.zh.append(zhEl);
     para.ids.push(data.id);
-    entry = {data, para, enEl, zhEl, btn, shownZh: ''};
+    entry = {data, para, enEl, zhEl, btn, stateLabel, shownZh: ''};
     entry.en = new Typer(enEl);
     entry.zh = new Typer(zhText, text => { if (text && current && ACTIVE.has(current.state)) $('sr-live').textContent = text; });
     btn.onclick = () => retry(data.id, btn);
@@ -393,7 +398,10 @@ function paint(entry) {
   }
   const zhText = typeof data.translation === 'string' ? data.translation.trim() : '';
   if (zhText) entry.shownZh = zhText;
-  const failed = !!data.translation_error && !zhText && !entry.shownZh;
+  const failed = !!data.translation_error;
+  const behind = data.translated_revision !== data.revision;
+  entry.stateLabel.textContent = failed ? '（翻译未完成）' : behind ? (entry.shownZh ? '（旧译文 · 中文待更新）' : '（等待中文）') : '';
+  entry.stateLabel.title = behind ? '英文版本 ' + data.revision + '；中文版本 ' + (data.translated_revision ?? '无') : '';
   entry.en.set(data.source || '');
   entry.zh.set(entry.shownZh);
   entry.zhEl.classList.toggle('failed', failed);

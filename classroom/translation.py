@@ -19,6 +19,43 @@ def apply_translation(latest, item, text):
         return None
     return dict(latest,translation=text,translated_revision=item['revision'],translation_error='')
 
+def critical_signature(text):
+    # Preserve order/count: changing a number, polarity, condition or unit is material.
+    return re.findall(r"[+-]?\d+(?:[.,]\d+)*(?:e[+-]?\d+)?|(?<![a-z])(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|half|quarter|negative|positive|neither|nor|no|not|never|without|cannot|unless|if|only|except|less|more|before|after|must|may|mg|g|kg|ml|l|mm|cm|m|km|ms|s|hz|khz|mhz|percent|milligrams?|grams?|kilograms?|milliliters?|liters?|meters?|seconds?|minutes?|hours?|degrees?|millimet(?:er|re)s?|centimet(?:er|re)s?|metres?|volts?|watts?|pa|kpa|mpa)(?![a-z])|n['’]t|[%°µμ<>=]", text.lower())
+
+
+def preview_due(item, previous, now):
+    if item['final']:
+        return True
+    text=item['source']
+    if previous is None:
+        return len(text.split()) >= 4 or bool(critical_signature(text))
+    if text == previous['source']:
+        return False
+    if critical_signature(text) != critical_signature(previous['source']):
+        return True
+    old=previous['source'].split()
+    new=text.split()
+    common=0
+    for a,b in zip(old,new):
+        if a != b:break
+        common+=1
+    # Revisions count changed suffix words; continuous small edits get a bounded refresh.
+    elapsed=now-previous['dispatched_at']
+    return (len(new)-common >= 4 and elapsed >= 1) or elapsed >= 5
+
+
+def validate_translation(content):
+    if not isinstance(content,str):
+        raise RuntimeError('本地翻译模型返回无效内容')
+    if '<think>' in content and '</think>' not in content:
+        raise RuntimeError('本地翻译模型返回未完成的思考内容')
+    content=re.sub(r'<think>.*?</think>','',content,flags=re.S).strip()
+    if not content or not re.search(r'[\w\u4e00-\u9fff]',content):
+        raise RuntimeError('本地翻译模型返回空内容')
+    return content
+
+
 class RevisionQueue:
     """Only the latest pending revision per segment; confirmed work gets priority."""
     def __init__(self):
@@ -29,7 +66,9 @@ class RevisionQueue:
     def put(self, item):
         if self.closed or item.get('asr_status') == 'unresolved':
             return
-        self.pending[item['id']] = item.copy()
+        item=item.copy()
+        item['queued_at']=time.monotonic()
+        self.pending[item['id']] = item
         self.wake.set()
 
     async def get(self):
@@ -92,11 +131,10 @@ class LocalTranslator:
             'max_tokens':min(384,max(64,len(text))), 'stream':False,
         })
         r.raise_for_status()
-        content = r.json()['choices'][0]['message']['content']
-        content = re.sub(r'<think>.*?</think>','',content or '',flags=re.S).strip()
-        if not content:
-            raise RuntimeError('本地翻译模型返回空内容')
-        return content
+        choice = r.json()['choices'][0]
+        if choice.get('finish_reason') != 'stop':
+            raise RuntimeError('本地翻译未完整结束：'+str(choice.get('finish_reason')))
+        return validate_translation(choice.get('message',{}).get('content'))
 
     async def close(self):
         await self.client.aclose()
