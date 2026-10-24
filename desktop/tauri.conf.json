@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "听课",
+  "version": "0.6.0",
+  "identifier": "app.tingke.desktop.dev",
+  "build": { "devUrl": "http://127.0.0.1:8767", "frontendDist": "../classroom/static" },
+  "app": { "withGlobalTauri": true, "windows": [], "security": { "capabilities": ["desktop"] } },
+  "bundle": { "active": false, "icon": [] }
+}

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import secrets
+import subprocess
 import time
 import uuid
 from fastapi import FastAPI,HTTPException,Request,UploadFile,WebSocket,WebSocketDisconnect
@@ -12,6 +13,7 @@ from fastapi.responses import FileResponse,JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .paths import WORK,OUTPUTS,SESSIONS,STATIC
 from .runtime import Runtime
+from .desktop import overview,FOLDERS
 from .session import ClassSession
 from .store import SessionStore,export_session
 from .history import session_path,audio_files,ensure_ended,reveal_recording,remove_class,update_retention,remove_unused_upload
@@ -50,6 +52,18 @@ def state():
     return dict(token=TOKEN,session=active.status() if active else None,
                 segments=list(active.segments.values())[-500:] if active else [],
                 ready=(WORK/'deployment.json').exists())
+
+@app.get('/api/system')
+def system_overview():
+    return overview(runtime)
+
+@app.post('/api/folders/{kind}')
+async def open_folder(kind:str):
+    path=FOLDERS.get(kind)
+    if path is None or not path.is_dir():raise HTTPException(404,'目录不存在')
+    try:await asyncio.to_thread(subprocess.run,['/usr/bin/open',str(path)],check=True,timeout=5)
+    except Exception:raise HTTPException(500,'无法打开文件夹')
+    return dict(ok=True)
 
 @app.post('/api/uploads')
 async def upload(file:UploadFile):

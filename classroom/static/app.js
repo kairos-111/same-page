@@ -26,6 +26,7 @@ let reconnectTimer = null;
 let reconnectDelay = 1500;
 let viewingHistory = false;
 let openingHistory = 0;
+let historyItems = [];
 let current = null;       // 当前会话状态
 let view = 'start';
 let pending = '';         // 'upload' | 'start' | 'stop'
@@ -75,8 +76,13 @@ function show(next) {
   if (next === 'live') window.scrollTo(0, 0);
   $('start-view').hidden = next !== 'start';
   $('live-view').hidden = next !== 'live';
+  $('library-view').hidden = next !== 'library';
+  $('settings-view').hidden = next !== 'settings';
+  document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('selected', b.dataset.page === (next === 'live' ? (viewingHistory ? 'library' : 'start') : next)));
   document.title = next === 'live' && current ? (current.title || '课堂') + ' · 听课' : '听课';
   if (next === 'start') { renderStart(); loadHistory(); }
+  else if (next === 'library') loadHistory();
+  else if (next === 'settings') loadSettings();
   else { finishAll(); renderLive(); requestAnimationFrame(() => { if (viewingHistory) { following = false; scroller.scrollTop = 0; $('jump').hidden = nearEnd(); } else toEnd(false); }); }
 }
 
@@ -140,13 +146,21 @@ function renderLast() {
 async function loadHistory() {
   try {
     const list = await getJSON('/api/sessions');
-    const items = [...list].sort((a, b) => String(b.started_at || b.id).localeCompare(String(a.started_at || a.id))).slice(0, 20);
-    $('history').replaceChildren(...items.map(historyRow));
-    $('history-empty').hidden = items.length > 0;
+    historyItems = [...list].sort((a, b) => String(b.started_at || b.id).localeCompare(String(a.started_at || a.id)));
+    renderHistory();
   } catch {
     $('history-empty').hidden = false;
     $('history-empty').textContent = '暂时读不到以前的记录。';
   }
+}
+function renderHistory() {
+  const query = $('history-search').value.trim().toLowerCase();
+  const items = historyItems.filter(item => String(item.title || '课堂记录').toLowerCase().includes(query));
+  $('history').replaceChildren(...items.map(historyRow));
+  $('library-count').textContent = historyItems.length || '';
+  $('history-summary').textContent = query ? '找到 ' + items.length + ' 堂课' : '最近 ' + items.length + ' 堂课';
+  $('history-empty').hidden = items.length > 0;
+  $('history-empty').textContent = query ? '没有找到这个课程，换个关键词试试。' : '还没有记录。开始一堂课，字幕会自动保存在这里。';
 }
 function historyRow(item) {
   const li = document.createElement('li');
@@ -228,12 +242,12 @@ async function openHistory(id, busy = false) {
   } catch (e) { flash(e.message || '无法打开这堂课的字幕'); }
 }
 async function leaveHistory() {
-  if (!viewingHistory) { show('start'); return; }
+  if (!viewingHistory) { show('library'); return; }
   try {
     const data = await getJSON('/api/state');
     viewingHistory = false;
     if (data.session) snapshot(data.session, data.segments); else clearSession();
-    show('start');
+    show('library');
   } catch (e) { flash(e.message || '暂时无法返回，请稍后重试'); }
 }
 
@@ -353,9 +367,11 @@ function renderBanner() {
 function flash(text, kind = 'error', ms = 6000) {
   transient = {text, kind, until: Date.now() + ms};
   if (view === 'live') renderBanner();
+  else if (view === 'library' || view === 'settings') { $('shell-notice').textContent = text; $('shell-notice').hidden = false; }
   else { startNote = {text, error: kind === 'error'}; renderStart(); }
   setTimeout(() => {
     if (transient && transient.until <= Date.now()) { transient = null; renderBanner(); }
+    if ($('shell-notice').textContent === text) $('shell-notice').hidden = true;
     if (startNote.text === text) { startNote = {text: '', error: false}; renderStart(); }
   }, ms + 50);
 }
@@ -577,7 +593,7 @@ function applyStatus(s) {
   if (prev && prev.id !== s.id) resetLines();
   current = s;
   const nowActive = ACTIVE.has(s.state);
-  if (nowActive && view !== 'live') show('live');
+  if (nowActive && (!prev || prev.id !== s.id || !ACTIVE.has(prev.state)) && view !== 'live') show('live');
   if (!prev || prev.state !== s.state) repaintAll();
   if (prev && ACTIVE.has(prev.state) && !nowActive) { disarmStop(); loadHistory(); }
   renderLive();
@@ -651,7 +667,7 @@ $('start').onclick = async () => {
     renderStart();
   }
 };
-$('new-class').onclick = async () => { startNote = {text: '', error: false}; await leaveHistory(); $('title').focus(); };
+$('new-class').onclick = async () => { startNote = {text: '', error: false}; if (viewingHistory) await leaveHistory(); else show('start'); $('title').focus(); };
 $('last-open').onclick = () => show('live');
 $('back').onclick = leaveHistory;
 

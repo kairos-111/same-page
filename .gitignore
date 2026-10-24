@@ -8,3 +8,6 @@ outputs/*.png
 outputs/*.log
 outputs/native/
 outputs/验收报告.json
+node_modules/
+desktop/target/
+desktop/gen/

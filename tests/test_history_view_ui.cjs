@@ -16,7 +16,7 @@ vm.runInContext(source.slice(source.indexOf('async function openHistory'),source
   await context.leaveHistory();
   assert.equal(context.viewingHistory,false);
   assert.deepEqual(seen[2],['snapshot','live',0]);
-  assert.deepEqual(seen[3],['show','start']);
+  assert.deepEqual(seen[3],['show','library']);
   await context.openHistory('live',true);
   assert.equal(context.viewingHistory,false);
   console.log('history read and return to current session checks passed');

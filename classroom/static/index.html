@@ -7,8 +7,19 @@
   <title>听课</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="app-shell">
+<aside class="app-sidebar" aria-label="应用导航">
+  <div class="sidebar-brand"><span class="logo">听</span><div><strong>听课</strong><small>你的本地课堂助手</small></div></div>
+  <nav>
+    <button class="nav-item selected" data-page="start"><span aria-hidden="true">◉</span>开始听课</button>
+    <button class="nav-item" data-page="library"><span aria-hidden="true">▤</span>课程库<span id="library-count" class="nav-count"></span></button>
+    <button class="nav-item" data-page="settings"><span aria-hidden="true">⚙</span>设置</button>
+  </nav>
+  <button id="resume-class" class="resume-class" hidden>● 返回正在进行的课</button>
+  <div class="sidebar-bottom"><span class="local-badge">● 本地处理</span><small>声音留在你的电脑上</small><button id="desktop-quit" hidden>退出听课</button><small id="desktop-version">开发版 · 0.6.0</small></div>
+</aside>
 
+<div id="shell-notice" class="shell-notice" role="status" hidden></div>
 <!-- 开始页：只回答一个问题——声音从哪来 -->
 <section id="start-view" class="view" aria-labelledby="start-heading">
   <header class="start-header">
@@ -17,8 +28,9 @@
   </header>
 
   <div class="start-body">
-    <h1 id="start-heading">这节课的声音从哪里来？</h1>
-    <p class="lead">选一个，点开始。英文会实时变成中文字幕，全程在这台电脑上处理。</p>
+    <p class="eyebrow">准备好，开始一堂新课</p>
+    <h1 id="start-heading">专注听课，让字幕跟上。</h1>
+    <p class="lead">选择声音来源，英文与中文一起呈现。识别、翻译和保存都在本机完成。</p>
 
     <div class="sources" role="radiogroup" aria-label="声音来源">
       <button type="button" class="source" role="radio" aria-checked="true" data-source="microphone">
@@ -64,14 +76,26 @@
       <button id="last-open" type="button" class="btn-ghost">查看字幕</button>
     </div>
 
+    <div class="home-bottom"><div><strong>每一堂课，都值得留住。</strong><p>字幕与原声分开管理，课后随时回来继续看。</p></div><button type="button" class="btn-ghost" id="home-library">打开课程库 →</button></div>
+  </div>
+</section>
+
+<section id="library-view" class="workspace-view" hidden aria-labelledby="library-heading">
+  <header class="workspace-header"><div><p class="eyebrow">在这里，继续每一次学习</p><h1 id="library-heading">课程库</h1><p class="workspace-description">阅读双语字幕，查看录音，整理你的课堂记录。</p></div><button id="library-new" class="btn-primary">＋ 开始新课</button></header>
+  <div class="library-toolbar"><label class="search-box"><span>⌕</span><input id="history-search" type="search" placeholder="搜索课程名称" aria-label="搜索课程名称"></label><span id="history-summary"></span></div>
     <section class="history" aria-labelledby="history-heading">
       <h2 id="history-heading">以前的课</h2>
       <ul id="history" class="history-list"></ul>
       <p id="history-empty" class="history-empty">还没有记录。每堂课都会自动保存在这里。</p>
     </section>
-  </div>
 </section>
-
+<section id="settings-view" class="workspace-view" hidden aria-labelledby="settings-heading">
+  <header class="workspace-header"><div><p class="eyebrow">为你的课堂做好准备</p><h1 id="settings-heading">设置</h1><p class="workspace-description">管理本机模型、阅读习惯和课堂文件。</p></div><span class="settings-local">本机离线</span></header>
+  <section class="settings-card"><div class="section-heading"><h2>识别与翻译</h2><span>文件状态</span></div><div id="model-list" class="model-list"><p>正在读取本机模型…</p></div><label class="setting-row"><span><strong>默认识别模型</strong><small>下次开始新课时生效；不会切换正在进行的课堂。</small></span><select id="settings-model"><option value="small">快速 · Small</option><option value="turbo">Whisper Turbo</option></select></label><p class="settings-note">模型文件存在不代表已经加载或通过准确度验证。此开发版使用本机已准备的模型，下载与安装管理在打包阶段完善。</p></section>
+  <section class="settings-card"><h2>字幕阅读</h2><label class="setting-row"><span><strong>默认只看中文</strong><small>也可以在字幕页随时切换。</small></span><input id="settings-zh-only" type="checkbox" role="switch"></label><div class="setting-row"><span><strong>字号与显示</strong><small>中英文字号在字幕页分别调整，自动记住上次选择。</small></span><span>跟随系统深浅色</span></div></section>
+  <section class="settings-card"><h2>课程与存储</h2><div class="setting-row"><span><strong>课堂文件</strong><small id="storage-summary">正在读取…</small></span><button class="btn-ghost" data-folder="courses">在访达打开</button></div><div class="setting-row"><span><strong>模型文件</strong><small>独立于课程保存；不会随删课而删除。</small></span><button class="btn-ghost" data-folder="models">打开目录</button></div><div class="setting-row"><span><strong>课程术语</strong><small>编辑术语 CSV，下次新课生效。</small></span><button class="btn-ghost" data-folder="terms">打开术语目录</button></div><p class="settings-note">每堂课结束后选择是否保留录音。模型与课堂内容均在本机处理，此版本未接入云端 API。</p></section>
+  <section class="settings-card"><h2>关于听课</h2><div class="setting-row"><span><strong>开发预览版 <span id="about-version">0.6.0</span></strong><small id="engine-ownership">正在连接本地引擎…</small></span><button class="btn-ghost" data-folder="logs">查看诊断目录</button></div><p id="settings-message" class="settings-note" role="status"></p></section>
+</section>
 <!-- 上课页：字幕占满屏幕，其余都让路 -->
 <section id="live-view" class="view" hidden aria-label="课堂字幕">
   <header class="bar">
@@ -153,6 +177,8 @@
     <button id="recording-keep" type="button" class="btn-primary">保存录音</button>
   </div>
 </dialog>
+<dialog id="desktop-exit" aria-labelledby="desktop-exit-heading"><h2 id="desktop-exit-heading">退出听课？</h2><p id="desktop-exit-message"></p><p id="desktop-exit-error" role="status"></p><div class="recording-actions"><button id="exit-cancel" class="btn-ghost">继续使用</button><button id="exit-confirm" class="btn-primary">退出应用</button></div></dialog>
 <script src="/static/app.js"></script>
+<script src="/static/desktop.js"></script>
 </body>
 </html>
