@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>听课</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- 开始页：只回答一个问题——声音从哪来 -->
+<section id="start-view" class="view" aria-labelledby="start-heading">
+  <header class="start-header">
+    <div class="brand"><span class="logo" aria-hidden="true">听</span><span class="brand-name">听课</span></div>
+    <span id="conn" class="conn" role="status"><i></i><span id="conn-text">正在连接…</span></span>
+  </header>
+
+  <div class="start-body">
+    <h1 id="start-heading">这节课的声音从哪里来？</h1>
+    <p class="lead">选一个，点开始。英文会实时变成中文字幕，全程在这台电脑上处理。</p>
+
+    <div class="sources" role="radiogroup" aria-label="声音来源">
+      <button type="button" class="source" role="radio" aria-checked="true" data-source="microphone">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        <strong>教室里</strong><span>用麦克风听老师讲</span>
+      </button>
+      <button type="button" class="source" role="radio" aria-checked="false" data-source="system">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        <strong>网课 / 视频</strong><span>听电脑正在播放的声音</span>
+      </button>
+      <button type="button" class="source" role="radio" aria-checked="false" data-source="file">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M10 17v-5l4 2.5z"/></svg>
+        <strong>已有录音</strong><span>导入音频或视频文件</span>
+      </button>
+    </div>
+    <p id="source-hint" class="source-hint"></p>
+
+    <label id="file-box" class="file-box" hidden>
+      <input type="file" id="file" accept="audio/*,video/*">
+      <span id="file-text">点这里选文件，或把文件拖进来</span>
+      <small>最大 1 GB，按原速读取</small>
+    </label>
+
+    <div class="go">
+      <input id="title" class="title-input" placeholder="课程名称（可不填）" maxlength="100" autocomplete="off" aria-label="课程名称">
+      <button id="start" type="button" class="btn-start" disabled>开始听课</button>
+    </div>
+    <p id="start-note" class="start-note" role="status"></p>
+
+    <details class="more">
+      <summary>识别设置 <span id="model-tag" class="model-tag"></span></summary>
+      <div class="more-body">
+        <div class="model-choice" role="radiogroup" aria-label="识别模型">
+          <label><input type="radio" name="model" value="small" checked><span><b>快速</b>Whisper Small，推荐日常使用</span></label>
+          <label><input type="radio" name="model" value="turbo"><span><b>更准</b>Whisper Turbo，较慢，适合对照</span></label>
+        </div>
+        <p class="more-note">专业词汇可写进 <code>outputs/课程术语.csv</code>（english、chinese 两列），下次开始时生效。</p>
+      </div>
+    </details>
+
+    <div id="last" class="last" hidden>
+      <div><span class="last-label">上一堂课</span><strong id="last-title"></strong><span id="last-meta" class="last-meta"></span></div>
+      <button id="last-open" type="button" class="btn-ghost">查看字幕</button>
+    </div>
+
+    <section class="history" aria-labelledby="history-heading">
+      <h2 id="history-heading">以前的课</h2>
+      <ul id="history" class="history-list"></ul>
+      <p id="history-empty" class="history-empty">还没有记录。每堂课都会自动保存在这里。</p>
+    </section>
+  </div>
+</section>
+
+<!-- 上课页：字幕占满屏幕，其余都让路 -->
+<section id="live-view" class="view" hidden aria-label="课堂字幕">
+  <header class="bar">
+    <div class="bar-left">
+      <button id="back" type="button" class="tool back" hidden aria-label="返回开始页">‹ 返回</button>
+      <span id="rec" class="rec" aria-hidden="true"></span>
+      <span id="live-state" class="live-state">准备中</span>
+      <span id="live-clock" class="live-clock">00:00</span>
+      <span class="bar-sep" aria-hidden="true"></span>
+      <span id="live-title" class="live-title"></span>
+      <span id="live-level" class="level" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+    </div>
+    <div class="bar-right">
+      <button id="zh-only" type="button" class="tool" aria-pressed="false" title="只显示中文">只看中文</button>
+      <span class="size-group" role="group" aria-label="中文字号">
+        <span class="size-label" aria-hidden="true">中</span>
+        <button id="zh-down" type="button" class="tool sz" aria-label="中文缩小">−</button>
+        <span id="zh-val" class="size-val" aria-live="polite"></span>
+        <button id="zh-up" type="button" class="tool sz" aria-label="中文放大">+</button>
+      </span>
+      <span class="size-group" role="group" aria-label="英文字号">
+        <span class="size-label" aria-hidden="true">英</span>
+        <button id="en-down" type="button" class="tool sz" aria-label="英文缩小">−</button>
+        <span id="en-val" class="size-val" aria-live="polite"></span>
+        <button id="en-up" type="button" class="tool sz" aria-label="英文放大">+</button>
+      </span>
+      <div class="pop-wrap">
+        <button id="info-btn" type="button" class="tool" aria-expanded="false" aria-controls="info" title="运行详情">详情</button>
+        <div id="info" class="pop" hidden>
+          <dl>
+            <dt>识别落后</dt><dd id="i-lag">—</dd>
+            <dt>待翻译</dt><dd id="i-queue">—</dd>
+            <dt>最久等待</dt><dd id="i-wait">—</dd>
+            <dt>内存（估算）</dt><dd id="i-mem">—</dd>
+            <dt>识别模型</dt><dd id="i-model">—</dd>
+            <dt>声音来源</dt><dd id="i-source">—</dd>
+            <dt>句子</dt><dd id="i-count">—</dd>
+          </dl>
+          <p class="pop-legend">字幕边听边出，几句合成一段。<br>译文被修正时会慢慢淡入新内容，不会闪。<br>鼠标指向一句，中英对应会一起高亮。</p>
+          <div class="pop-links"><a id="dl-txt-live">下载双语文本</a><a id="dl-srt-live">下载字幕 SRT</a></div>
+        </div>
+      </div>
+      <button id="stop" type="button" class="btn-stop">结束</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" role="status" hidden></div>
+
+  <main id="scroller" class="scroller" tabindex="0" aria-label="字幕，最新的在最下面">
+    <div id="live-empty" class="live-empty"><div class="pulse" aria-hidden="true"><i></i><i></i><i></i></div><p id="live-empty-text">正在准备…</p></div>
+    <div id="lines" class="lines"></div>
+    <div id="sr-live" class="sr-only" aria-live="polite"></div>
+  </main>
+
+  <button id="jump" type="button" class="jump" hidden>↓ 回到最新</button>
+
+  <footer id="done" class="done" hidden>
+    <div class="done-text"><strong id="done-title">已保存</strong><span id="done-sub"></span></div>
+    <div class="done-actions">
+      <a id="dl-txt" class="btn-ghost">下载双语文本</a>
+      <a id="dl-srt" class="btn-ghost">下载字幕 SRT</a>
+      <button id="new-class" type="button" class="btn-primary">开始新的一堂课</button>
+    </div>
+  </footer>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
