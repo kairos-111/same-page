@@ -76,13 +76,14 @@ class GuardedDecoder:
         self.model, self.model_path, self.prompt = model, model_path, prompt
         self.events = []
         self.offset = 0.0
+        self.allow_recovery = True
 
     def __call__(self, audio, init_prompt=''):
         duration = len(audio) / 16000
         attempts = []
         for temperature in (0.0, .4):
             # Refuse expensive recovery of unusually large upstream buffers.
-            if attempts and duration > MAX_RECOVERY_SECONDS:
+            if attempts and (duration > MAX_RECOVERY_SECONDS or not self.allow_recovery):
                 break
             prompt = (self.prompt + ' ' + init_prompt)[-1600:] if not attempts else 'An English lecture.'
             try:
@@ -108,5 +109,5 @@ class GuardedDecoder:
                 text=raw[:4000], text_characters=len(raw), text_truncated=len(raw)>4000))
         self.events.append(dict(type='asr_quality', status='unresolved', start=self.offset,
             end=self.offset+duration, attempts=attempts, recovery='reimport_audio',
-            recovery_skipped=duration>MAX_RECOVERY_SECONDS))
+            recovery_skipped=duration>MAX_RECOVERY_SECONDS or not self.allow_recovery))
         raise RejectedRecognition()

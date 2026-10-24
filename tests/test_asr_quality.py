@@ -3,6 +3,7 @@ from collections import OrderedDict, deque
 from pathlib import Path
 import unittest
 from unittest.mock import Mock
+from types import SimpleNamespace
 
 from classroom.asr import WhisperAdapter
 from classroom.asr_quality import GuardedDecoder, RejectedRecognition, text_issue, words_issue, segments_issue
@@ -103,6 +104,8 @@ class QualityTests(unittest.TestCase):
         online.get_audio_buffer_end_time.return_value=32
         online.process_iter.side_effect=lambda:adapter.decoder(range(320000))
         adapter.online=online
+        adapter.end_seconds=32
+        adapter.recovery=SimpleNamespace(process_iter=online.process_iter)
         result=adapter.finish()
         self.assertEqual(result[:3],([],[],False))
         self.assertTrue(result[3]['rejected'])

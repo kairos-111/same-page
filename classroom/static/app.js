@@ -128,7 +128,7 @@ function renderLast() {
   if (!s || ACTIVE.has(s.state) || !rows.size) { box.hidden = true; return; }
   box.hidden = false;
   $('last-title').textContent = s.title || '课堂记录';
-  $('last-meta').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · ' + (s.state === 'completed' ? '已保存' : s.state === 'error' ? '出错，已收到的内容已保存' : '中断，已收到的内容已保存');
+  $('last-meta').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · ' + (s.state === 'completed' ? (s.integrity?.warning ? '已保存，待核查' : '已保存') : s.state === 'error' ? '出错，已收到的内容已保存' : '中断，已收到的内容已保存');
 }
 
 async function loadHistory() {
@@ -155,11 +155,11 @@ function historyRow(item) {
   const when = Number.isNaN(d.getTime()) ? String(item.id || '').slice(0, 13) : d.toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false});
   meta.textContent = when + ' · ' + duration(item.audio_seconds) + ' · ' + (SOURCE_NAME[item.source] || '音频');
   const isLive = current && item.id === current.id && ACTIVE.has(current.state);
-  const odd = !isLive && item.state && item.state !== 'completed';
+  const odd = !isLive && ((item.state && item.state !== 'completed') || item.integrity?.warning);
   if (isLive || odd) {
     const tag = document.createElement('span');
     tag.className = 'warn';
-    tag.textContent = isLive ? ' · 正在进行' : item.state === 'error' ? ' · 出错' : ' · 未正常结束';
+    tag.textContent = isLive ? ' · 正在进行' : item.integrity?.warning ? ' · 已保存，待核查' : item.state === 'error' ? ' · 出错' : ' · 未正常结束';
     meta.append(tag);
   }
   main.append(title, meta);
@@ -227,7 +227,7 @@ function renderLive() {
   const done = $('done');
   done.hidden = active;
   if (!active) {
-    $('done-title').textContent = s.state === 'completed' ? '这堂课已保存' : s.state === 'error' ? '这堂课出错停止了' : '这堂课中断了';
+    $('done-title').textContent = s.state === 'completed' ? (s.integrity?.warning ? '已保存，有内容待核查' : '这堂课已保存') : s.state === 'error' ? '这堂课出错停止了' : '这堂课中断了';
     $('done-sub').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · 录音和字幕都保存在这台电脑上' + (num(s.asr_unresolved) ? '；有 ' + num(s.asr_unresolved) + ' 处识别异常，需定位录音补处理' : '');
   }
   renderBanner();
@@ -238,11 +238,12 @@ function renderBanner() {
   let text = '', kind = '';
   if (transient && transient.until > Date.now()) ({text, kind} = transient);
   else if (!connected) { text = '和本机服务的连接断了，正在重连。录音不受影响，会继续在后台进行。'; kind = 'error'; }
-  else if (s?.error) { text = s.error; kind = 'error'; }
+  else if (s?.error) { text = s.error + (s.integrity?.warning ? ' ' + s.integrity.warning : ''); kind = 'error'; }
+  else if (s?.integrity?.warning) { text = s.integrity.warning; kind = 'warn'; }
   else if (s?.state === 'draining') { text = '已停止收音，正在把最后几句处理完并保存，请稍等，不要关闭启动程序。'; kind = 'info'; }
   else if (s?.state === 'interrupted') { text = '会话中断了。已收到的声音保存在本机，可以用「已有录音」重新处理。'; kind = 'error'; }
   else if (s?.state === 'running' && num(s.input_idle) > 5) { text = '已经 ' + Math.round(num(s.input_idle)) + ' 秒没收到声音了。检查一下声音有没有在播放、输入设备或系统权限。'; kind = 'warn'; }
-  else if (s?.state === 'running' && (num(s.asr_lag) > 30 || Math.max(num(s.translation_wait), num(s.chinese_lag)) > 30)) { text = '处理落后比较多，正在追。声音都在保存，不会丢。'; kind = 'warn'; }
+  else if (s?.state === 'running' && (num(s.asr_lag) > 30 || Math.max(num(s.translation_wait), num(s.chinese_lag)) > 30)) { text = '处理落后比较多，正在追。原声正在保存，识别完整性需在结束后核查。'; kind = 'warn'; }
   else if (s?.state === 'running' && (num(s.asr_lag) > 15 || Math.max(num(s.translation_wait), num(s.chinese_lag)) > 15)) { text = '字幕稍慢，正在追上…'; kind = 'warn'; }
   b.hidden = !text;
   b.textContent = text;
@@ -387,6 +388,7 @@ function dropOldest() {
 function paint(entry) {
   const {data} = entry;
   if (data.asr_status === 'unresolved') {
+    if (entry.stateLabel) entry.stateLabel.textContent = '';
     entry.shownZh = data.source || '[识别异常：请定位录音补处理]';
     // Withdraw a previous preview immediately, including in Chinese-only mode.
     entry.en.target = data.source || ''; entry.en.finish();

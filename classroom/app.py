@@ -108,8 +108,8 @@ def export(session_id:str,kind:str):
     if not p.is_dir():raise HTTPException(404)
     names={'txt':'双语记录.txt','srt':'双语字幕.srt','events':'events.jsonl'}
     if kind not in names:raise HTTPException(404)
-    if kind in ('txt','srt'):export_session(p)
-    return FileResponse(p/names[kind],filename=names[kind])
+    target=export_session(p)[kind] if kind in ('txt','srt') else p/names[kind]
+    return FileResponse(target,filename=target.name)
 
 @app.websocket('/ws')
 async def updates(ws:WebSocket):

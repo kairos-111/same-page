@@ -9,7 +9,7 @@ import uuid
 import psutil
 import httpx
 from .paths import OUTPUTS,SESSIONS,LLAMA_URL
-from .store import SessionStore
+from .store import SessionStore,check_integrity
 from .subtitles import SegmentComposer
 from .translation import Glossary,LocalTranslator,RevisionQueue,apply_translation,preview_due,validate_translation,critical_signature
 from .process import terminate_and_drain
@@ -52,6 +52,8 @@ class ClassSession:
         self.asr_unresolved=0
         self.inflight_item=None
         self.inflight_started=None
+        self.integrity=None
+        self.asr_flushed=False
 
     def event(self,obj,persist=True):
         obj={**obj,'session_id':self.id,'session_elapsed':time.monotonic()-self.clock,'wall_time':time.time()}
@@ -67,7 +69,7 @@ class ClassSession:
     def status(self):
         now=self.metrics_finished_at or time.monotonic()
         oldest=min((x.get('queued_at',now) for x in self.queue.pending.values()),default=now)
-        behind=[x for x in self.segments.values() if x.get('translated_revision')!=x['revision']]
+        behind=[x for x in self.segments.values() if x.get('asr_status') != 'unresolved' and x.get('translated_revision')!=x['revision']]
         processes=[psutil.Process()]
         try:processes+=processes[0].children(recursive=True)
         except psutil.Error:pass
@@ -76,6 +78,7 @@ class ClassSession:
             try:rss+=p.memory_info().rss
             except psutil.Error:pass
         return dict(type='status',id=self.id,title=self.title,state=self.state,error=self.error,
+            integrity=self.integrity,
             audio_seconds=self.store.audio.seconds,asr_lag=max(0,self.store.audio.seconds-self.processed),
             translation_queue=len(self.queue.pending),translation_wait=max(0,now-oldest),
             translation_busy=self.inflight is not None,
@@ -84,7 +87,7 @@ class ClassSession:
             translation_inflight_id=self.inflight,
             chinese_pending=len(behind),
             chinese_lag=max((now-x['unmatched_since'] for x in behind),default=0),
-            finalization_wait=max((now-x['first_seen_at'] for x in self.segments.values() if not x['final']),default=0),
+            finalization_wait=max((now-x['first_seen_at'] for x in self.segments.values() if not x['final'] and x.get('asr_status') != 'unresolved'),default=0),
             level=round(self.level,4),input_idle=round(time.monotonic()-self.last_input,1),
             memory_bytes=rss,source=self.source,model=self.model,
             asr_unresolved=self.asr_unresolved,
@@ -126,8 +129,10 @@ class ClassSession:
             self.metrics_finished_at=time.monotonic()
             self.store.audio.close()
             await self.translator.close()
+            self.integrity=check_integrity(self.store.path,self.store.audio.seconds,self.processed,self.asr_flushed)
+            self.event(dict(type='integrity',session_id=self.id,**self.integrity))
             self.event(self.status())
-            self.store.metadata.update(state=self.state,error=self.error,audio_seconds=self.store.audio.seconds,
+            self.store.metadata.update(integrity=self.integrity,state=self.state,error=self.error,audio_seconds=self.store.audio.seconds,
                 processed_seconds=self.processed,asr_unresolved=self.asr_unresolved,first_translation_latency=self.first_latency[-1000:],
                 final_translation_latency=self.final_latency[-1000:],finished_at=datetime.now().astimezone().isoformat())
             self.store.save_metadata()
@@ -137,7 +142,7 @@ class ClassSession:
             self.asr=None
 
     def audit_translations(self):
-        incomplete=[x['id'] for x in self.segments.values() if x['final'] and (not x.get('translation') or x.get('translated_revision')!=x['revision'])]
+        incomplete=[x['id'] for x in self.store.load_segments(self.store.path) if x['final'] and (not x.get('translation') or x.get('translated_revision')!=x['revision'])]
         self.store.metadata['incomplete_translation_ids']=incomplete
         if incomplete and not self.error:
             self.error=f'{len(incomplete)} 句最终中文未完成；原声与修订已保留，可导入录音补处理'
@@ -218,12 +223,18 @@ class ClassSession:
             if available<=0:break
             # Catch up from disk, never by dropping unread audio.
             data=self.store.audio.read(cursor,min(48000,available))
+            if not data:raise RuntimeError("音频日志读取未前进；原声保留，未处理区间待核查")
             cursor+=len(data)//2
+            if hasattr(self.asr,'set_backlog'):
+                self.asr.set_backlog(max(0,self.store.audio.seconds-cursor/16000))
             result=await self.runtime.thread(self.asr.process,data,cursor/16000)
+            self.record_asr_events()
             self.processed=cursor/16000
             self.accept_asr_result(result)
         result=await self.runtime.thread(self.asr.finish)
+        self.record_asr_events()
         self.accept_asr_result(result)
+        self.asr_flushed=True
         self.queue.close()
 
     def accept_asr_result(self, result):
@@ -236,6 +247,11 @@ class ClassSession:
                 failure['attempts'][-1]['reason']))
             return
         for event in self.composer.ingest(*result[:2], flush=result[2]):self.on_segment(event)
+
+    def record_asr_events(self):
+        # Drain on the same ASR worker boundary; adapter never touches the store/UI.
+        for event in self.asr.drain_events() if hasattr(self.asr,'drain_events') else ():
+            self.event(dict(event,session_id=self.id))
 
     def on_segment(self,event):
         key=event['id']

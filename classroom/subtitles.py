@@ -45,6 +45,10 @@ class SegmentComposer:
         old = self.previous.get(key)
         start = start if math.isfinite(start) and start >= 0 else 0
         end = end if math.isfinite(end) and end >= start else start
+        if old:
+            start = min(start, old['start'])
+        if self.words:
+            start = min(start, self.words[0].start)
         event = dict(type='segment', id=key, source='[识别异常：此区间未确认，请定位原始录音补处理]',
             start=start, end=end, final=False, revision=old['revision']+1 if old else 1,
             language='en', translation='', translated_revision=None,

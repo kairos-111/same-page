@@ -113,20 +113,70 @@ class SessionStore:
         self.audio.close()
         self.events.close()
 
+def check_integrity(path, audio_seconds, processed_seconds, asr_flushed=True):
+    """End-of-run bookkeeping, never a claim that every spoken word was heard."""
+    path = Path(path)
+    segments = SessionStore.load_segments(path)
+    unmatched = [s['id'] for s in segments if not (
+        s.get('asr_status') == 'unresolved' or
+        (s.get('final') and s.get('translation') and s.get('translated_revision') == s.get('revision')))]
+    gaps = [dict(start=s['start'], end=s['end'], reason=s.get('asr_reason', 'asr_unresolved'))
+            for s in segments if s.get('asr_status') == 'unresolved']
+    counts = {}
+    with (path/'events.jsonl').open() as events:
+        for line in events:
+            try:event = json.loads(line)
+            except json.JSONDecodeError:continue
+            if event.get('type') != 'asr_coverage':continue
+            action = event['action']
+            counts[action] = counts.get(action, 0)+1
+            if action == 'gap':
+                gaps.append({k:event[k] for k in ('start', 'end', 'reason')})
+    if processed_seconds < audio_seconds-1/16000:
+        gaps.append(dict(start=processed_seconds, end=audio_seconds, reason='unprocessed_audio'))
+    if not asr_flushed and audio_seconds>0:
+        # Even a fully advanced read cursor can leave hypotheses inside the ASR.
+        tail=max((s['end'] for s in segments if s.get('final')),default=0)
+        gaps.append(dict(start=min(tail,audio_seconds),end=audio_seconds,reason='asr_finalize_incomplete'))
+    warning = ''
+    if gaps or unmatched:
+        warning = f'已保存，但有 {len(gaps)} 个待核查识别区间、{len(unmatched)} 句未完成匹配译文；请查看双语文本和原声。'
+    return dict(state='needs_review' if warning else 'checked', warning=warning,
+                recognition_gaps=gaps, unmatched_translation_ids=unmatched,
+                asr_flushed=asr_flushed,coverage_events=counts, scope='流程核对，不证明逐词完整或识别准确')
+
+
 def export_session(path):
     path = Path(path)
     segments = SessionStore.load_segments(path)
-    text, srt = [], []
+    metadata_path = path/'session.json'
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    integrity = metadata.get('integrity')
+    note = (integrity.get('warning') or '流程核对完成；不证明逐词完整或识别准确。') if integrity else '此记录尚无结束完整性核对；不能据此证明字幕完整。'
+    text, srt = [note+'\n'], []
+    if integrity:
+        for gap in integrity.get('recognition_gaps', []):
+            text.append(f"[待核查识别区间 {srt_time(gap['start'])} — {srt_time(gap['end'])}] {gap['reason']}")
+        if integrity.get('unmatched_translation_ids'):
+            text.append('未完成匹配译文：'+', '.join(integrity['unmatched_translation_ids'])+'\n')
     index = 0
     for s in segments:
         final = s.get("final", False)
         translated = s.get("translation", "")
         unresolved = s.get('asr_status') == 'unresolved'
-        label = "识别异常／未确认，需定位录音补处理" if unresolved else ("已确认" if final else "未确认")
+        matched = bool(translated) and s.get('translated_revision') == s['revision']
+        source_label = '原文已定稿' if final else '原文未定稿'
+        target_label = ('译文版本匹配' if final else '译文预览匹配') if matched else ('译文过期' if translated else '译文缺失')
+        label = '识别异常／未确认，需定位录音补处理' if unresolved else source_label+' / '+target_label
         pending = '[识别未恢复，未送翻译]' if unresolved else '[待翻译]'
         text.append(f"[{srt_time(s['start'])} — {srt_time(s['end'])}] {label}\n{s['source']}\n{translated or pending}\n")
         if not unresolved and final and translated and s.get("translated_revision") == s["revision"]:
             index += 1
             srt.append(f"{index}\n{srt_time(s['start'])} --> {srt_time(max(s['end'],s['start']+.2))}\n{translated}\n{s['source']}\n")
-    (path / "双语记录.txt").write_text("\n".join(text))
-    (path / "双语字幕.srt").write_text("\n".join(srt))
+    # Legacy exports remain evidence. Download a separately named current rendering.
+    legacy = not integrity and ((path/'双语记录.txt').exists() or (path/'双语字幕.srt').exists())
+    suffix = '-核对版' if legacy else ''
+    files = dict(txt=path/f'双语记录{suffix}.txt',srt=path/f'双语字幕{suffix}.srt')
+    files['txt'].write_text('\n'.join(text))
+    files['srt'].write_text('\n'.join(srt))
+    return files
