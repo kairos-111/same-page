@@ -14,6 +14,7 @@ from .paths import WORK,OUTPUTS,SESSIONS,STATIC
 from .runtime import Runtime
 from .session import ClassSession
 from .store import SessionStore,export_session
+from .history import session_path,audio_files,ensure_ended,reveal_recording,remove_class,update_retention,remove_unused_upload
 
 runtime=Runtime()
 active=None
@@ -78,7 +79,8 @@ async def start(request:Request):
         upload_path=WORK/'uploads'/file_id
         if not upload_path.exists():raise HTTPException(400,'录音文件不存在')
     async with session_lock:
-        if active and active.state in ('loading','running','draining'):raise HTTPException(409,'请先停止当前会话')
+        task=getattr(active,'orchestrator',None) if active else None
+        if active and (active.state in ('loading','running','draining') or (task is not None and not task.done())):raise HTTPException(409,'请先结束当前会话并等待保存完成')
         active=ClassSession(runtime,source,model,title,upload_path,realtime=bool(body.get('realtime',True)))
         active.orchestrator=asyncio.create_task(active.run())
     return dict(id=active.id)
@@ -97,9 +99,63 @@ async def retry(segment_id:str):
 def sessions():
     items=[]
     for p in sorted(SESSIONS.glob('*/session.json'),reverse=True):
-        try:items.append(json.loads(p.read_text()))
-        except (OSError,json.JSONDecodeError):pass
+        try:
+            directory=session_path(SESSIONS,p.parent.name)
+            item=json.loads(p.read_text())
+            item['has_recording']=bool(audio_files(directory))
+            task=getattr(active,'orchestrator',None) if active and active.id==item['id'] else None
+            item['busy']=bool(active and active.id==item['id'] and (active.state in ('loading','running','draining') or (task is not None and not task.done())))
+            items.append(item)
+        except (OSError,ValueError,KeyError):pass
     return items[:100]
+
+def ended_class(session_id):
+    try:
+        path=session_path(SESSIONS,session_id)
+        ensure_ended(session_id,active)
+        return path
+    except FileNotFoundError as exc:
+        raise HTTPException(404,str(exc))
+    except ValueError as exc:
+        raise HTTPException(409,str(exc))
+
+@app.post('/api/sessions/{session_id}/recording/reveal')
+async def reveal(session_id:str):
+    async with session_lock:
+        path=ended_class(session_id)
+        try:await asyncio.to_thread(reveal_recording,path)
+        except FileNotFoundError as exc:raise HTTPException(404,str(exc))
+        except Exception:raise HTTPException(500,'未能打开访达，请稍后重试')
+    return dict(ok=True)
+
+@app.post('/api/sessions/{session_id}/recording')
+async def recording_choice(session_id:str,request:Request):
+    body=await request.json()
+    keep=body.get('keep')
+    if type(keep) is not bool:raise HTTPException(400,'请选择是否保存录音')
+    async with session_lock:
+        path=ended_class(session_id)
+        metadata=json.loads((path/'session.json').read_text())
+        if keep and not audio_files(path):raise HTTPException(409,'录音已不存在，不能恢复保存')
+        metadata=await asyncio.to_thread(update_retention,path,keep)
+        if not keep:await asyncio.to_thread(remove_unused_upload,SESSIONS,WORK/'uploads',metadata)
+        if active and active.id==session_id:
+            active.store.metadata.update(metadata)
+            active.event(active.status(),persist=False)
+    return dict(ok=True,recording_decision=metadata['recording_decision'],recording_retained=keep)
+
+@app.post('/api/sessions/{session_id}/delete')
+async def delete_class(session_id:str,request:Request):
+    global active
+    body=await request.json()
+    if body.get('confirm') is not True:raise HTTPException(400,'请确认删除整堂课及其字幕和录音')
+    async with session_lock:
+        path=ended_class(session_id)
+        metadata=json.loads((path/'session.json').read_text())
+        await asyncio.to_thread(remove_class,path)
+        await asyncio.to_thread(remove_unused_upload,SESSIONS,WORK/'uploads',metadata)
+        if active and active.id==session_id:active=None
+    return dict(ok=True)
 
 @app.get('/api/export/{session_id}/{kind}')
 def export(session_id:str,kind:str):
@@ -123,9 +179,11 @@ async def updates(ws:WebSocket):
             if active is not bound:
                 if bound:bound.clients.discard(queue)
                 bound=active
+                while not queue.empty():queue.get_nowait()
                 if bound:
                     bound.clients.add(queue)
                     await ws.send_json(dict(type='snapshot',status=bound.status(),segments=list(bound.segments.values())[-500:]))
+                else:await ws.send_json(dict(type='snapshot',status=None,segments=[]))
             try:
                 event=await asyncio.wait_for(queue.get(),1)
                 if event.get('type')=='resync':

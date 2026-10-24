@@ -26,7 +26,9 @@ class ClassSession:
         self.state='loading'
         self.error=''
         self.store=SessionStore(SESSIONS/self.id,dict(id=self.id,title=title,source=source,model=model,
-            started_at=datetime.now().astimezone().isoformat(),state=self.state,language='en',target='zh'))
+            started_at=datetime.now().astimezone().isoformat(),state=self.state,language='en',target='zh',
+            recording_decision='pending',recording_retained=True,
+            upload_id=upload.name if upload is not None else None))
         self.queue=RevisionQueue()
         self.segments=OrderedDict()
         self.context=deque(maxlen=2)
@@ -54,6 +56,7 @@ class ClassSession:
         self.inflight_started=None
         self.integrity=None
         self.asr_flushed=False
+        self.saved=False
 
     def event(self,obj,persist=True):
         obj={**obj,'session_id':self.id,'session_elapsed':time.monotonic()-self.clock,'wall_time':time.time()}
@@ -78,7 +81,9 @@ class ClassSession:
             try:rss+=p.memory_info().rss
             except psutil.Error:pass
         return dict(type='status',id=self.id,title=self.title,state=self.state,error=self.error,
-            integrity=self.integrity,
+            integrity=self.integrity,saved=self.saved,
+            recording_decision=self.store.metadata.get("recording_decision"),
+            recording_retained=self.store.metadata.get("recording_retained",True),
             audio_seconds=self.store.audio.seconds,asr_lag=max(0,self.store.audio.seconds-self.processed),
             translation_queue=len(self.queue.pending),translation_wait=max(0,now-oldest),
             translation_busy=self.inflight is not None,
@@ -110,7 +115,7 @@ class ClassSession:
             self.queue.close()
             await self.translation_task
             self.audit_translations()
-            self.state='completed' if not self.error else 'error'
+            self.state='draining'
         except asyncio.CancelledError:
             self.state='interrupted'
         except Exception as e:
@@ -131,13 +136,18 @@ class ClassSession:
             await self.translator.close()
             self.integrity=check_integrity(self.store.path,self.store.audio.seconds,self.processed,self.asr_flushed)
             self.event(dict(type='integrity',session_id=self.id,**self.integrity))
-            self.event(self.status())
             self.store.metadata.update(integrity=self.integrity,state=self.state,error=self.error,audio_seconds=self.store.audio.seconds,
                 processed_seconds=self.processed,asr_unresolved=self.asr_unresolved,first_translation_latency=self.first_latency[-1000:],
                 final_translation_latency=self.final_latency[-1000:],finished_at=datetime.now().astimezone().isoformat())
             self.store.save_metadata()
+            # Announce completion only after all exports and WAV files exist.
             self.store.export()
             await asyncio.to_thread(self.store.audio.export_wav)
+            if self.state == 'draining':self.state='error' if self.error else 'completed'
+            self.saved=True
+            self.store.metadata.update(state=self.state,saved=True)
+            self.store.save_metadata()
+            self.event(self.status())
             self.store.close()
             self.asr=None
 

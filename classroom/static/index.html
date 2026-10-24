@@ -136,11 +136,23 @@
     <div class="done-actions">
       <a id="dl-txt" class="btn-ghost">下载双语文本</a>
       <a id="dl-srt" class="btn-ghost">下载字幕 SRT</a>
+      <button id="recording-choice" type="button" class="btn-ghost" hidden>选择是否保留录音</button>
       <button id="new-class" type="button" class="btn-primary">开始新的一堂课</button>
     </div>
   </footer>
 </section>
 
+<dialog id="recording-dialog" aria-labelledby="recording-heading">
+  <h2 id="recording-heading">保存这堂课的录音吗？</h2>
+  <p>字幕和历史记录都会保留。保留录音可用于回听、核对和补处理。</p>
+  <p>选择“不保存录音”会永久删除本课的音频文件，无法撤销。</p>
+  <p id="recording-error" role="status"></p>
+  <div class="recording-actions">
+    <button id="recording-later" type="button" class="btn-ghost">稍后决定</button>
+    <button id="recording-discard" type="button" class="btn-ghost">不保存录音</button>
+    <button id="recording-keep" type="button" class="btn-primary">保存录音</button>
+  </div>
+</dialog>
 <script src="/static/app.js"></script>
 </body>
 </html>

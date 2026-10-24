@@ -241,3 +241,18 @@ h1 { font-size: 32px; line-height: 1.25; margin: 0 0 10px; font-weight: 700; let
 }
 
 .translation-state { font-size: .7em; color: var(--soft); margin-left: .4em; }
+
+/* 历史记录操作 */
+.history-list li { flex-wrap: wrap; }
+.h-actions { display: flex; gap: 8px; margin-left: auto; }
+.h-actions button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.h-actions button:disabled { opacity: .45; cursor: default; }
+.h-actions .danger { color: #bc3434; }
+@media (max-width: 720px) { .history-list .h-main { flex-basis: 100%; } }
+
+#recording-dialog { width: min(520px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--bg); color: var(--ink); }
+#recording-dialog::backdrop { background: rgb(0 0 0 / .4); }
+#recording-dialog h2 { margin-top: 0; font-size: 21px; }
+#recording-dialog p { line-height: 1.7; }
+#recording-error { color: #bc3434; }
+.recording-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }

@@ -32,6 +32,8 @@ let transient = null;     // 临时提示 {text, kind, until}
 let following = true;
 let stopArmed = null;
 const rows = new Map();
+const recordingPrompted = new Set();
+let recordingDialogId = null;
 
 function clampSize(i) { return Math.min(SIZES.length - 1, Math.max(0, Number.isFinite(i) ? i : 2)); }
 const num = v => Number.isFinite(Number(v)) ? Number(v) : 0;
@@ -154,7 +156,7 @@ function historyRow(item) {
   const d = new Date(item.started_at);
   const when = Number.isNaN(d.getTime()) ? String(item.id || '').slice(0, 13) : d.toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false});
   meta.textContent = when + ' · ' + duration(item.audio_seconds) + ' · ' + (SOURCE_NAME[item.source] || '音频');
-  const isLive = current && item.id === current.id && ACTIVE.has(current.state);
+  const isLive = item.busy || (current && item.id === current.id && ACTIVE.has(current.state));
   const odd = !isLive && ((item.state && item.state !== 'completed') || item.integrity?.warning);
   if (isLive || odd) {
     const tag = document.createElement('span');
@@ -171,8 +173,71 @@ function historyRow(item) {
     a.setAttribute('aria-label', '下载「' + (item.title || '课堂记录') + '」' + label);
     li.append(a);
   }
+  const actions = document.createElement('div');
+  actions.className = 'h-actions';
+  const recording = document.createElement('button');
+  recording.type = 'button'; recording.textContent = item.has_recording ? '查看录音 ↗' : '未保留录音';
+  recording.disabled = isLive || !item.has_recording;
+  recording.title = '在访达中显示录音，可用系统播放器打开';
+  recording.onclick = async () => {
+    recording.disabled = true;
+    try { await post('/api/sessions/' + encodeURIComponent(item.id) + '/recording/reveal'); }
+    catch (e) { flash(e.message); }
+    finally { recording.disabled = isLive || !item.has_recording; }
+  };
+  const remove = document.createElement('button');
+  remove.type = 'button'; remove.className = 'danger'; remove.textContent = '删除'; remove.disabled = !!isLive;
+  remove.onclick = async () => {
+    if (!window.confirm('删除「' + (item.title || '课堂记录') + '」？\n历史记录、字幕和本课录音将一起永久删除，无法撤销。')) return;
+    remove.disabled = true;
+    try {
+      await post('/api/sessions/' + encodeURIComponent(item.id) + '/delete', {confirm: true});
+      const data = await getJSON('/api/state');
+      if (data.session) snapshot(data.session, data.segments); else clearSession();
+      renderStart();
+      await loadHistory();
+    } catch (e) { flash(e.message); remove.disabled = false; }
+  };
+  actions.append(recording);
+  if (!isLive && item.has_recording && item.recording_decision === 'pending') {
+    const choice = document.createElement('button');
+    choice.type = 'button'; choice.textContent = '保留录音？';
+    choice.onclick = () => openRecordingChoice(item.id);
+    actions.append(choice);
+  }
+  actions.append(remove); li.append(actions);
   return li;
 }
+
+/* ---------- 课后录音选择 ---------- */
+function maybePromptRecording(s) {
+  if (!s || ACTIVE.has(s.state) || !s.saved || s.recording_decision !== 'pending' || !num(s.audio_seconds)) return;
+  if (recordingPrompted.has(s.id) || $('recording-dialog').open) return;
+  openRecordingChoice(s.id);
+}
+function openRecordingChoice(id) {
+  recordingPrompted.add(id); recordingDialogId = id;
+  $('recording-error').textContent = '';
+  $('recording-dialog').showModal();
+}
+async function chooseRecording(keep) {
+  const id = recordingDialogId;
+  if (!id) return;
+  const buttons = ['recording-keep', 'recording-discard', 'recording-later'].map($);
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    await post('/api/sessions/' + encodeURIComponent(id) + '/recording', {keep});
+    $('recording-dialog').close();
+    const data = await getJSON('/api/state');
+    if (data.session) applyStatus(data.session);
+    await loadHistory();
+  } catch (e) { $('recording-error').textContent = e.message; }
+  finally { buttons.forEach(b => { b.disabled = false; }); }
+}
+$('recording-keep').onclick = () => chooseRecording(true);
+$('recording-discard').onclick = () => chooseRecording(false);
+$('recording-later').onclick = () => $('recording-dialog').close();
+$('recording-choice').onclick = () => { if (current) openRecordingChoice(current.id); };
 
 /* ---------- 上课页 ---------- */
 const STATE_LABEL = {loading: '准备中', running: '正在听', draining: '正在收尾', completed: '已结束', error: '出错了', interrupted: '已中断'};
@@ -228,8 +293,10 @@ function renderLive() {
   done.hidden = active;
   if (!active) {
     $('done-title').textContent = s.state === 'completed' ? (s.integrity?.warning ? '已保存，有内容待核查' : '这堂课已保存') : s.state === 'error' ? '这堂课出错停止了' : '这堂课中断了';
-    $('done-sub').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · 录音和字幕都保存在这台电脑上' + (num(s.asr_unresolved) ? '；有 ' + num(s.asr_unresolved) + ' 处识别异常，需定位录音补处理' : '');
+    $('done-sub').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · ' + (s.recording_retained === false ? '字幕已保存在这台电脑上，录音未保留' : '录音和字幕都保存在这台电脑上') + (num(s.asr_unresolved) ? '；有 ' + num(s.asr_unresolved) + ' 处识别异常，需定位录音补处理' : '');
   }
+  $('recording-choice').hidden = active || !s.saved || s.recording_decision !== 'pending' || !num(s.audio_seconds);
+  maybePromptRecording(s);
   renderBanner();
 }
 function renderBanner() {
@@ -646,7 +713,7 @@ function connect() {
     if (ws !== socket) return;
     let data;
     try { data = JSON.parse(ev.data); } catch { socket.close(); return; }
-    if (data.type === 'snapshot') snapshot(data.status, data.segments);
+    if (data.type === 'snapshot') { if (data.status) snapshot(data.status, data.segments); else { clearSession(); renderStart(); loadHistory(); } }
     else if (data.type === 'segment') { upsertLine(data); if (current) renderLive(); }
     else if (data.type === 'status') applyStatus(data);
     else if (data.type === 'error') flash(data.message || '本机处理出了点问题。');
