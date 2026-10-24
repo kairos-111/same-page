@@ -1,6 +1,8 @@
 """Turn incremental ASR tokens into revisable, stable-ID subtitle segments."""
 from dataclasses import dataclass
 import re
+import math
+from .asr_quality import words_issue
 
 @dataclass
 class Word:
@@ -37,7 +39,32 @@ class SegmentComposer:
             self.previous.pop(next(iter(self.previous)))
         return event
 
+    def reject(self, start, end, reason):
+        # Replace any preview with an explicit gap, never with cleaned-up ASR text.
+        key = f"s{self.index:06}"
+        old = self.previous.get(key)
+        start = start if math.isfinite(start) and start >= 0 else 0
+        end = end if math.isfinite(end) and end >= start else start
+        event = dict(type='segment', id=key, source='[识别异常：此区间未确认，请定位原始录音补处理]',
+            start=start, end=end, final=False, revision=old['revision']+1 if old else 1,
+            language='en', translation='', translated_revision=None,
+            asr_status='unresolved', asr_reason=reason)
+        self.words=[]
+        self.previous[key]=event
+        if len(self.previous)>4:self.previous.pop(next(iter(self.previous)))
+        self.index+=1
+        return event
+
     def ingest(self, committed, partial=(), flush=False):
+        committed, partial = list(committed), list(partial)
+        candidate = self.words + committed + partial
+        issue = words_issue(candidate)
+        if issue:
+            event = self.reject(candidate[0].start, candidate[-1].end, issue)
+            raw = self.text(candidate)
+            event.update(asr_rejected_text=raw[:4000], asr_text_characters=len(raw),
+                         asr_text_truncated=len(raw)>4000)
+            return [event]
         events = []
         for word in committed:
             self.words.append(word)

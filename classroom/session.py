@@ -47,6 +47,7 @@ class ClassSession:
         self.translator=LocalTranslator(LLAMA_URL,self.glossary)
         self.last_segment=None
         self.inflight=None
+        self.asr_unresolved=0
 
     def event(self,obj,persist=True):
         obj={**obj,'wall_time':time.time()}
@@ -74,6 +75,7 @@ class ClassSession:
             translation_busy=self.inflight is not None,
             level=round(self.level,4),input_idle=round(time.monotonic()-self.last_input,1),
             memory_bytes=rss,source=self.source,model=self.model,
+            asr_unresolved=self.asr_unresolved,
             final_count=sum(s['final'] for s in self.segments.values()))
 
     async def run(self):
@@ -111,7 +113,7 @@ class ClassSession:
             await self.translator.close()
             self.event(self.status())
             self.store.metadata.update(state=self.state,error=self.error,audio_seconds=self.store.audio.seconds,
-                processed_seconds=self.processed,first_translation_latency=self.first_latency[-1000:],
+                processed_seconds=self.processed,asr_unresolved=self.asr_unresolved,first_translation_latency=self.first_latency[-1000:],
                 final_translation_latency=self.final_latency[-1000:],finished_at=datetime.now().astimezone().isoformat())
             self.store.save_metadata()
             self.store.export()
@@ -197,13 +199,31 @@ class ClassSession:
             cursor+=len(data)//2
             result=await self.runtime.thread(self.asr.process,data,cursor/16000)
             self.processed=cursor/16000
-            for e in self.composer.ingest(*result[:2],flush=result[2]):self.on_segment(e)
+            self.accept_asr_result(result)
         result=await self.runtime.thread(self.asr.finish)
-        for e in self.composer.ingest(*result[:2],flush=True):self.on_segment(e)
+        self.accept_asr_result(result)
         self.queue.close()
+
+    def accept_asr_result(self, result):
+        # Fourth field is additive; legacy/test adapters may still return three.
+        quality = result[3] if len(result)>3 else {}
+        for event in quality.get('events', []):self.event(event)
+        if quality.get('rejected'):
+            failure = quality['events'][-1]
+            self.on_segment(self.composer.reject(failure['start'], failure['end'],
+                failure['attempts'][-1]['reason']))
+            return
+        for event in self.composer.ingest(*result[:2], flush=result[2]):self.on_segment(event)
 
     def on_segment(self,event):
         key=event['id']
+        if event.get('asr_status') == 'unresolved':
+            self.asr_unresolved+=1
+            self.queue.pending.pop(key, None)
+            self.segments[key]=event
+            self.last_segment=event
+            self.event(event)
+            return
         old=self.segments.get(key)
         reuse=False
         if old and old.get('translation') and event['source'].startswith(old['source']):
@@ -273,4 +293,4 @@ class ClassSession:
 
     def retry(self,segment_id):
         item=self.segments.get(segment_id)
-        if item:self.queue.put(item)
+        if item and item.get('asr_status') != 'unresolved':self.queue.put(item)

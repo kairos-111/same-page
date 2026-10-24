@@ -8,6 +8,8 @@ import httpx
 
 def apply_translation(latest, item, text):
     """A prefix translation may fill a preview, but can never replace a newer result."""
+    if latest and latest.get('asr_status') == 'unresolved':
+        return None
     if not latest or item['revision']<(latest.get('translated_revision') or 0):
         return None
     current=item['revision']==latest['revision']
@@ -25,7 +27,7 @@ class RevisionQueue:
         self.closed = False
 
     def put(self, item):
-        if self.closed:
+        if self.closed or item.get('asr_status') == 'unresolved':
             return
         self.pending[item['id']] = item.copy()
         self.wake.set()
@@ -47,19 +49,24 @@ class RevisionQueue:
 class Glossary:
     def __init__(self, path):
         self.terms = []
+        self.asr_terms = []
         if Path(path).exists():
             with Path(path).open(encoding='utf-8-sig', newline='') as f:
                 for row in csv.DictReader(f):
                     en,zh = row.get('english','').strip(),row.get('chinese','').strip()
                     if en and zh and len(en)<120 and len(zh)<120:
                         self.terms.append((en,zh))
+                        # Legacy CSVs remain useful for translation, but no longer
+                        # assert that every example word is a topic of this class.
+                        if len(self.terms)<=1000 and row.get('asr_enabled','').strip().lower() in ('1','true','yes'):
+                            self.asr_terms.append(en)
         self.terms = self.terms[:1000]
 
     def matching(self, text):
         return [(en,zh) for en,zh in self.terms if re.search(r'(?<!\w)'+re.escape(en)+r'(?!\w)',text,re.I)][:20]
 
     def asr_hint(self):
-        return ', '.join(en for en,_ in self.terms)[:800]
+        return ', '.join(self.asr_terms)[:800]
 
 class LocalTranslator:
     def __init__(self, url, glossary):

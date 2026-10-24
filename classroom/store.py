@@ -121,9 +121,11 @@ def export_session(path):
     for s in segments:
         final = s.get("final", False)
         translated = s.get("translation", "")
-        label = "已确认" if final else "未确认"
-        text.append(f"[{srt_time(s['start'])} — {srt_time(s['end'])}] {label}\n{s['source']}\n{translated or '[待翻译]'}\n")
-        if final and translated and s.get("translated_revision") == s["revision"]:
+        unresolved = s.get('asr_status') == 'unresolved'
+        label = "识别异常／未确认，需定位录音补处理" if unresolved else ("已确认" if final else "未确认")
+        pending = '[识别未恢复，未送翻译]' if unresolved else '[待翻译]'
+        text.append(f"[{srt_time(s['start'])} — {srt_time(s['end'])}] {label}\n{s['source']}\n{translated or pending}\n")
+        if not unresolved and final and translated and s.get("translated_revision") == s["revision"]:
             index += 1
             srt.append(f"{index}\n{srt_time(s['start'])} --> {srt_time(max(s['end'],s['start']+.2))}\n{translated}\n{s['source']}\n")
     (path / "双语记录.txt").write_text("\n".join(text))

@@ -1,5 +1,5 @@
 """WhisperLiveKit LocalAgreement adapter; all calls run on one dedicated thread."""
-from pathlib import Path
+from .asr_quality import GuardedDecoder, RejectedRecognition
 
 class WhisperAdapter:
     def __init__(self, model_path, hint=''):
@@ -19,12 +19,8 @@ class WhisperAdapter:
         self.asr.buffer_trimming_sec = 10
         prompt='An English lecture.'
         if hint:prompt+=' Topics include '+hint.rstrip(', .')+'.'
-        def transcribe(audio,init_prompt=''):
-            result=self.asr.model(audio,language='en',initial_prompt=(prompt+' '+init_prompt)[-1600:],
-                word_timestamps=True,condition_on_previous_text=False,temperature=0.0,
-                path_or_hf_repo=self.asr.model_size_or_path)
-            return result.get('segments',[])
-        self.asr.transcribe=transcribe
+        self.decoder = GuardedDecoder(self.asr.model, self.asr.model_size_or_path, prompt)
+        self.asr.transcribe = self.decoder
         self.online = OnlineASRProcessor(self.asr)
         self.vad = OnnxWrapper(load_onnx_session())
         self.active = False
@@ -51,20 +47,41 @@ class WhisperAdapter:
             self.active=True;self.silence=0
         else:
             self.silence+=len(audio)/16000
-        committed,_ = self.online.process_iter()
+        try:
+            self.decoder.offset = self.online.buffer_time_offset
+            committed,_ = self.online.process_iter()
+        except RejectedRecognition:
+            return self._reject(end_seconds)
         if self.silence>=1:
             rest,_=self.online.finish()
             self.online.init(offset=end_seconds)
             self.active=False;self.silence=0
-            return committed+rest,[],True
+            return self._result(committed+rest, [], True)
         partial=list(self.online.transcript_buffer.buffer)
         self.online.committed=self.online.committed[-300:]
-        return committed,partial,False
+        return self._result(committed, partial, False)
 
     def finish(self):
         if not self.active:
             return [],[],True
-        committed,_=self.online.process_iter()
+        end_seconds = self.online.get_audio_buffer_end_time()
+        try:
+            self.decoder.offset = self.online.buffer_time_offset
+            committed,_=self.online.process_iter()
+        except RejectedRecognition:
+            return self._reject(end_seconds)
         rest,_=self.online.finish()
         self.active=False
-        return committed+rest,[],True
+        return self._result(committed+rest, [], True)
+
+    def _result(self, committed, partial, flush, rejected=False):
+        events, self.decoder.events = self.decoder.events, []
+        return committed, partial, flush, dict(events=events, rejected=rejected)
+
+    def _reject(self, end_seconds):
+        # Nothing from this failed hypothesis reaches LocalAgreement or finish().
+        # The audio remains in the session journal; reset prevents endless retries.
+        self.online.init(offset=end_seconds)
+        self.active=False
+        self.silence=0
+        return self._result([], [], False, rejected=True)

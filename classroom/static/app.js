@@ -211,7 +211,7 @@ function renderLive() {
   $('i-mem').textContent = s.memory_bytes ? (num(s.memory_bytes) / 1024 ** 3).toFixed(1) + ' GB' : '—';
   $('i-model').textContent = modelName(s.model);
   $('i-source').textContent = SOURCE_NAME[s.source] || '—';
-  $('i-count').textContent = rows.size + ' 句' + (s.final_count != null ? '，已确认 ' + s.final_count : '');
+  $('i-count').textContent = rows.size + ' 句' + (s.final_count != null ? '，已确认 ' + s.final_count : '') + (num(s.asr_unresolved) ? '，识别异常 ' + num(s.asr_unresolved) + ' 处' : '');
   for (const [id, kind] of [['dl-txt', 'txt'], ['dl-srt', 'srt'], ['dl-txt-live', 'txt'], ['dl-srt-live', 'srt']]) {
     $(id).href = '/api/export/' + encodeURIComponent(s.id) + '/' + kind;
   }
@@ -225,7 +225,7 @@ function renderLive() {
   done.hidden = active;
   if (!active) {
     $('done-title').textContent = s.state === 'completed' ? '这堂课已保存' : s.state === 'error' ? '这堂课出错停止了' : '这堂课中断了';
-    $('done-sub').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · 录音和字幕都保存在这台电脑上';
+    $('done-sub').textContent = duration(s.audio_seconds) + ' · ' + rows.size + ' 句 · 录音和字幕都保存在这台电脑上' + (num(s.asr_unresolved) ? '；有 ' + num(s.asr_unresolved) + ' 处识别异常，需定位录音补处理' : '');
   }
   renderBanner();
 }
@@ -381,6 +381,16 @@ function dropOldest() {
 // 新识别出的文字没有译文时，保留上一次的中文，绝不退回“翻译中”
 function paint(entry) {
   const {data} = entry;
+  if (data.asr_status === 'unresolved') {
+    entry.shownZh = data.source || '[识别异常：请定位录音补处理]';
+    // Withdraw a previous preview immediately, including in Chinese-only mode.
+    entry.en.target = data.source || ''; entry.en.finish();
+    entry.zh.target = entry.shownZh; entry.zh.finish();
+    entry.zhEl.classList.add('failed');
+    entry.zhEl.title = '识别恢复失败；此区间未确认，原始录音已保留';
+    entry.btn.hidden = true;
+    return;
+  }
   const zhText = typeof data.translation === 'string' ? data.translation.trim() : '';
   if (zhText) entry.shownZh = zhText;
   const failed = !!data.translation_error && !zhText && !entry.shownZh;
