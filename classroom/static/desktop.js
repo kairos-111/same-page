@@ -32,7 +32,7 @@ async function loadSettings() {
     const loaded=data.models.filter(model=>model.loaded).length;
     $('engine-summary').textContent=data.model_operation ? '正在处理…' : loaded ? loaded+'/'+data.models.length+' 运行中' : '未加载';
     $('engine-status').classList.toggle('running',loaded>0 && !data.model_operation);
-    $('engine-status').title=loaded ? '已加载 '+loaded+' 个模型，点击管理' : '模型未加载；开始翻译时会自动加载。点击管理';
+    $('engine-status').title=loaded ? '已加载 '+loaded+' 个模型，点击管理' : '模型未加载；启动应用或开始翻译时会自动加载。点击管理';
     $('models-start').disabled=locked || data.models.length===3 && data.models.every(m=>m.loaded);
     $('models-stop').disabled=locked || !loaded;
     $('model-list').replaceChildren(...data.models.map(model => {
@@ -78,7 +78,7 @@ async function requestDesktopExit() {
       flash('请先选择是否保留本次录音，再退出。');return;
     }
     const busy = data.session && ACTIVE.has(data.session.state);
-    $('desktop-exit-message').textContent = busy ? '当前仍在翻译。确认后将停止收音、处理剩余内容并保存，再退出应用。' : (nativeInfo?.owns_engine ? '当前翻译已结束。退出将关闭本应用启动的本地引擎。' : '退出桌面窗口。已运行的共享本地服务将继续可用。');
+    $('desktop-exit-message').textContent = busy ? '当前仍在翻译。确认后将停止收音、处理剩余内容并保存，再关闭所有模型并退出。' : (nativeInfo?.owns_engine ? '退出将关闭所有模型和本地引擎。' : '退出将关闭所有模型；共享的本地服务继续运行。');
     $('exit-confirm').textContent = busy ? '结束、保存并退出' : '退出应用';
     $('desktop-exit-error').textContent = '';
     if (!$('desktop-exit').open) $('desktop-exit').showModal();
@@ -99,16 +99,39 @@ $('exit-confirm').onclick = async () => {
       if (!$('recording-dialog').open) openRecordingChoice(saved.session.id);
       flash('记录已保存，请选择是否保留录音，再退出。');return;
     }
+    $('desktop-exit-message').textContent = '正在关闭模型…';
+    await stopAllModels();
     await window.__TAURI__.core.invoke('finish_exit');
   } catch (e) { $('desktop-exit-error').textContent = String(e); }
   finally { $('exit-confirm').disabled = false; $('exit-cancel').disabled = false; }
 };
+// The app loads every model at launch and releases them at quit; the per-model
+// switches in Settings still work in between.
+async function autoStartModels() {
+  try {
+    const [state,system] = await Promise.all([getJSON('/api/state'),getJSON('/api/system')]);
+    if (!state.ready || (state.session && ACTIVE.has(state.session.state)) || system.model_operation) return;
+    if (system.models.every(model => model.loaded || !model.available)) return;
+    await controlModels('all','start');
+  } catch {}
+}
+async function stopAllModels() {
+  // Wait out a load still in progress (for example the launch auto-start), then stop.
+  for (let i = 0; i < 60; i++) {
+    try {
+      const system = await getJSON('/api/system');
+      if (!system.model_operation) { if (system.models.some(model => model.loaded)) await post('/api/models/all/stop',{recognition:pref.model}); return; }
+    } catch { return; }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+}
 async function connectDesktop() {
   if (!window.__TAURI__) return;
   try {
     nativeInfo = await window.__TAURI__.core.invoke('desktop_info');
     await window.__TAURI__.event.listen('desktop-close-requested', requestDesktopExit);
     $('desktop-version').textContent = (nativeInfo.development ? '开发版 ' : '') + nativeInfo.version;
+    autoStartModels();
   } catch (e) { $('desktop-version').textContent = '桌面连接未完成'; $('settings-message').textContent = String(e); }
 }
 // Update the return-to-live shortcut without changing the page being read.
