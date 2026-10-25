@@ -32,8 +32,14 @@ work/runtime/python/bin/python3.12 windows/build_windows.py
 Produces `work/win/stage/` and `work/win/out/SamePage-<version>-windows-x64-setup.exe` (+ `.sha256`).
 Model checksums are verified; the build fails if the installer would exceed NSIS's 2 GB limit.
 
-## Smoke test under Wine (optional)
+## Testing without a Windows PC
 
-`windows/smoke_wine.sh` installs nothing on the Mac; it runs the staged Windows Python in
-an amd64 container: imports, the engine on a file import, recognition and CPU translation.
-Wine cannot test the Edge window or real microphone/loopback capture.
+- `SAMEPAGE_ASR_BACKEND=ct2 TINGKE_MODELS=<folder with whisper-small-ct2 + hy-mt>` runs the
+  Windows recognition path on the Mac (tests/test_windows_build.py covers it with a fixture).
+- Wine 10 (`samepage-wine10b` image, WineHQ 10.0 pinned; Wine 11 aborts under emulation):
+  verified the installer (`/S` silent install, file list and hashes), the Windows Python,
+  the engine web layer, and the launcher lifecycle with `windows/fake_window.py`
+  (`SAMEPAGE_BROWSER_CMD`). Set `LANG=C.UTF-8` or Wine cannot create Chinese file names.
+- Wine limits on this Mac: NumPy imports `ucrtbase.crealf` (missing in Wine, present in
+  Windows 10/11), and Rosetta crashes Wine on new threads ("invalid gdt selector"), so the
+  model/recognition path and audio capture can only be checked on a real PC.

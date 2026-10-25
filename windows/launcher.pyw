@@ -18,7 +18,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import threading
 import time
 import urllib.request
 
@@ -135,52 +134,28 @@ def first_instance():
     return handle, first
 
 
-# ---- splash ------------------------------------------------------------------
+# ---- splash ----------------------------------------------------------------
 
 class Splash:
-    """A small 'starting' window; silently absent if tkinter is unavailable."""
+    """The startup window runs as its own pythonw process (Tk needs its main thread)."""
 
     def __init__(self):
-        self.root = None
-        self.text = None
-        self.ready = threading.Event()
-        threading.Thread(target=self._run, daemon=True).start()
-        self.ready.wait(3)
-
-    def _run(self):
+        self.process = None
+        script = HERE / 'splash.pyw'
+        pythonw = PYTHON.with_name('pythonw.exe')
         try:
-            import tkinter as tk
-            root = tk.Tk()
-            root.title(APP)
-            root.overrideredirect(True)
-            root.configure(bg='#f6f4ef')
-            w, h = 360, 150
-            root.geometry(f'{w}x{h}+{(root.winfo_screenwidth() - w) // 2}+{(root.winfo_screenheight() - h) // 2}')
-            root.attributes('-topmost', True)
-            tk.Label(root, text=APP, bg='#f6f4ef', fg='#173d34', font=('Microsoft YaHei UI', 18, 'bold')).pack(pady=(30, 6))
-            self.text = tk.StringVar(value='正在启动本地引擎…')
-            tk.Label(root, textvariable=self.text, bg='#f6f4ef', fg='#5d6662', font=('Microsoft YaHei UI', 10)).pack()
-            self.root = root
-            self.ready.set()
-            root.mainloop()
-        except Exception as exc:
+            if script.is_file() and pythonw.is_file():
+                self.process = subprocess.Popen([str(pythonw), '-I', '-B', str(script)])
+        except OSError as exc:
             log(f'splash unavailable: {exc!r}')
-            self.ready.set()
-
-    def say(self, text):
-        if self.root and self.text:
-            try:
-                self.root.after(0, self.text.set, text)
-            except Exception:
-                pass
 
     def close(self):
-        if self.root:
+        if self.process and self.process.poll() is None:
             try:
-                self.root.after(0, self.root.destroy)
-            except Exception:
+                self.process.terminate()
+            except OSError:
                 pass
-            self.root = None
+        self.process = None
 
 
 # ---- engine process ----------------------------------------------------------
@@ -327,7 +302,6 @@ def main():
             message_box(f'本地端口 {PORT} 已被其他程序占用，Same Page 无法启动。\n请关闭占用该端口的程序后重试。')
             return 1
         engine = start_engine(job)
-        splash.say('正在启动本地引擎…第一次打开可能需要半分钟')
         state = wait_for_engine(engine)
         if state is None:
             splash.close()
@@ -335,10 +309,8 @@ def main():
             if engine.poll() is None:
                 engine.kill()
             return 1
-    splash.say('正在打开窗口…')
     window = open_window()
-    time.sleep(1.5)
-    splash.close()
+    # The splash closes itself shortly after the engine answers; do not cut it off.
     if engine is None:
         # Another launcher owns the engine; this one only opened a window.
         return 0

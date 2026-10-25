@@ -91,6 +91,8 @@ def packages():
         if source.is_file():
             shutil.copy2(source, PY / name)
     shutil.rmtree(SITE / 'Scripts', ignore_errors=True)
+    for stray in SITE.glob('*.whl'):
+        stray.unlink()
     shutil.rmtree(SITE / 'bin', ignore_errors=True)
     for name in MSVC_DLLS + ('vccorlib140.dll', 'vcamp140.dll'):
         (SITE / name).unlink(missing_ok=True)
@@ -103,12 +105,14 @@ def engine_code():
     (ENGINE / 'scripts').mkdir(parents=True)
     shutil.copy2(ROOT / 'scripts' / 'serve.py', ENGINE / 'scripts' / 'serve.py')
     (ENGINE / 'outputs').mkdir()
-    shutil.copy2(ROOT / 'outputs' / '课程术语.csv', ENGINE / 'outputs' / '课程术语.csv')
+    # NSIS on Linux drops non-ASCII file names; serve.py also accepts this name.
+    shutil.copy2(ROOT / 'outputs' / '课程术语.csv', ENGINE / 'outputs' / 'terms-template.csv')
     (ENGINE / 'bundle.json').write_text(json.dumps(dict(version=VERSION, local_only=True, api_port=8877,
                                                         llama_port=8878, platform='windows')), encoding='utf-8')
     (ENGINE / 'work' / 'deployment.json').write_text(json.dumps(dict(local_bundle=True, models_verified=True,
                                                                      version=VERSION, platform='windows')), encoding='utf-8')
     shutil.copy2(ROOT / 'windows' / 'launcher.pyw', STAGE / 'launcher.pyw')
+    shutil.copy2(ROOT / 'windows' / 'splash.pyw', STAGE / 'splash.pyw')
 
 
 def llama():
@@ -182,7 +186,7 @@ def licenses():
 - Microsoft Visual C++ 运行库（msvc-runtime）— 按微软可再发行组件条款随附
 各 Python 包的完整许可见 engine/work/runtime/python/Lib/site-packages/*.dist-info。
 """
-    (STAGE / '第三方许可.txt').write_text(text, encoding='utf-8')
+    (STAGE / 'THIRD-PARTY-NOTICES.txt').write_text(text, encoding='utf-8')
     shutil.copy2(ROOT / 'classroom' / 'wlk' / 'LICENSE-WhisperLiveKit', STAGE / 'LICENSE-WhisperLiveKit.txt')
 
 
@@ -198,6 +202,9 @@ def precompile():
 def manifest():
     step('manifest')
     files = sorted(p for p in STAGE.rglob('*') if p.is_file())
+    odd = [str(p.relative_to(STAGE)) for p in files if not str(p.relative_to(STAGE)).isascii()]
+    if odd:
+        raise SystemExit('non-ASCII file names would be dropped by makensis: ' + ', '.join(odd[:5]))
     total = sum(p.stat().st_size for p in files)
     big = [dict(path=str(p.relative_to(STAGE)), bytes=p.stat().st_size, sha256=sha(p))
            for p in files if p.stat().st_size > 20 << 20]

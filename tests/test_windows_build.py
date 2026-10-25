@@ -139,7 +139,7 @@ class OverviewTests(unittest.TestCase):
 
 class ScriptsCompileTests(unittest.TestCase):
     def test_windows_scripts_are_valid_python(self):
-        for path in (ROOT / 'windows' / 'launcher.pyw', ROOT / 'classroom' / 'capture_windows.py',
+        for path in (ROOT / 'windows' / 'launcher.pyw', ROOT / 'windows' / 'splash.pyw', ROOT / 'classroom' / 'capture_windows.py',
                      ROOT / 'classroom' / 'decode_file.py', ROOT / 'windows' / 'build_windows.py'):
             py_compile.compile(str(path), doraise=True, cfile=tempfile.mktemp())
 

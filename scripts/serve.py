@@ -13,7 +13,8 @@ WORK.mkdir(parents=True,exist_ok=True)
 OUTPUTS.mkdir(parents=True,exist_ok=True)
 terms=OUTPUTS/'课程术语.csv'
 template=root/'outputs'/'课程术语.csv'
-if not terms.exists() and template.exists():shutil.copy2(template,terms)
+if not template.exists():template=root/'outputs'/'terms-template.csv'  # Windows build: ASCII file names only
+if not terms.exists() and template.exists():shutil.copyfile(template,terms)  # data only; CopyFile2 fails on some Windows setups
 os.environ['HF_HOME']=str(WORK/'hf-cache')
 os.environ['NUMBA_CACHE_DIR']=str(WORK/'numba-cache')
 os.environ['MPLCONFIGDIR']=str(WORK/'matplotlib-cache')
