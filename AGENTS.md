@@ -49,6 +49,6 @@ Same Page，主slogan“每一句，都跟得上。”，导航使用“开始�
 
 字幕呈现按用户要求：不在正文插入unresolved系统消息/黄色卡片/空行；拒绝时撤回旧预览，范围和计数放详情，审计与导出继续保留。普通完整性提示不弹正文横幅；真实阻断错误仍提示。
 
-0.10.2录音与导入（源码，本机.app未更新）：结束时把PCM暂存合并为单个`audio_0000.wav`，帧数核对通过后才删PCM；回放走`RecordingStream`（一个文件头，支持Range），旧记录多段WAV也必须拼成一条。导入文件不按原速（`realtime:false`），快速导入不得以积压为由关闭识别补救，中途结束只识别到当前位置并保留未处理区间。旧记录重复PCM只能经用户确认后用`scripts/dedupe_recordings.py --apply`清理。
+0.10.2录音与导入（已装入本机.app）：结束时把PCM暂存合并为单个`audio_0000.wav`，帧数核对通过后才删PCM；回放走`RecordingStream`（一个文件头，支持Range），旧记录多段WAV也必须拼成一条。导入文件不按原速（`realtime:false`），快速导入不得以积压为由关闭识别补救，中途结束只识别到当前位置并保留未处理区间。旧记录重复PCM只能经用户确认后用`scripts/dedupe_recordings.py --apply`清理。
 
 应用副本（2026-10-25）：Spotlight里只应出现集中目录的`Same Page.app`。更新前的回滚副本只留一个，放`work/backups.noindex/`，验收后移入废纸篓；开发构建在`work/desktop.noindex/`。不要在可索引目录里留.app副本。

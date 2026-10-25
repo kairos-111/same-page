@@ -422,7 +422,7 @@ html.subtitle-open, html.subtitle-open body { overflow: hidden; }
 .lang-row {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:22px}
 .row-label {font-size:13px;color:var(--soft);min-width:56px}
 .langs {display:inline-flex;gap:8px;flex-wrap:wrap}
-.lang {display:inline-flex;align-items:baseline;gap:6px;height:40px;padding:0 16px;border:1.5px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:15px;cursor:pointer}
+.lang {display:inline-flex;align-items:center;justify-content:center;gap:6px;height:40px;padding:0 16px;line-height:1;border:1.5px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:15px;cursor:pointer}
 .lang small {font-size:11px;color:var(--soft)}
 .lang:hover:not(:disabled) {border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
 .lang[aria-checked="true"] {border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}

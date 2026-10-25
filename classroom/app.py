@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse,JSONResponse,StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .paths import WORK,OUTPUTS,SESSIONS,STATIC,DEPLOYMENT,API_PORT,ROOT
 from .runtime import Runtime
-from .desktop import overview,FOLDERS
+from .desktop import overview,FOLDERS,VERSION
 from .session import ClassSession
 from .languages import MODES
 from .store import SessionStore,export_session
@@ -56,7 +56,7 @@ def index():return FileResponse(STATIC/'index.html')
 def state():
     return dict(token=TOKEN,session=active.status() if active else None,
                 segments=list(active.segments.values())[-500:] if active else [],
-                ready=DEPLOYMENT.exists(),engine_root=str(ROOT),language_modes=list(MODES))
+                ready=DEPLOYMENT.exists(),engine_root=str(ROOT),language_modes=list(MODES),version=VERSION)
 
 @app.get('/api/system')
 def system_overview():

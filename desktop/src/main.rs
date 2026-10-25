@@ -24,12 +24,21 @@ fn state()->Result<serde_json::Value,String> {
     let value:serde_json::Value=serde_json::from_str(body).map_err(|e|e.to_string())?;
     if value.get("token").is_none() || value.get("segments").is_none() {return Err("端口不是 Same Page 服务".into())}
     if layout().bundled && value["engine_root"].as_str()!=layout().root.to_str() {return Err("端口已被另一个引擎占用".into())}
+    // An engine left over from an older app would serve new pages with old APIs.
+    if layout().bundled && value["version"].as_str()!=Some(env!("CARGO_PKG_VERSION")) {
+        return Err(format!("端口{}上仍在运行旧版本的本地引擎（{}）。请退出 Same Page，在“活动监视器”中结束残留的 python 进程后重新打开。",port,value["version"].as_str().unwrap_or("未知版本")))
+    }
     Ok(value)
 }
 fn start_engine()->Result<Option<Child>,String> {
     let cfg=layout();
-    if state().is_ok(){return Ok(None)}
-    if TcpStream::connect(format!("127.0.0.1:{}",cfg.port)).is_ok(){return Err(format!("本地端口{}已被占用。请先关闭另一个 Same Page 实例，再重新打开应用。",cfg.port))}
+    let existing=state();
+    if existing.is_ok(){return Ok(None)}
+    if TcpStream::connect(format!("127.0.0.1:{}",cfg.port)).is_ok(){
+        let reason=existing.err().unwrap_or_default();
+        if reason.contains("旧版本"){return Err(reason)}
+        return Err(format!("本地端口{}已被占用。请先关闭另一个 Same Page 实例，再重新打开应用。",cfg.port))
+    }
     std::fs::create_dir_all(cfg.data.join("work")).map_err(|e|e.to_string())?;
     let log=std::fs::OpenOptions::new().create(true).append(true).open(cfg.data.join("work/desktop-engine.log")).map_err(|e|e.to_string())?;
     let mut cmd=Command::new(&cfg.python);

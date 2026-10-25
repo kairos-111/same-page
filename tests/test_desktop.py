@@ -146,3 +146,18 @@ class ResidentWhisperTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaisesRegex(RuntimeError,'synthetic failure'):await runtime.preload_asr('turbo')
                     self.assertEqual(runtime.asr_models,{'small':small})
         finally:runtime.executor.shutdown(wait=True)
+
+
+class EngineVersionTests(unittest.TestCase):
+    def test_state_reports_the_engine_version_matching_the_desktop_shell(self):
+        # The desktop app refuses a leftover engine of another version, so both must agree.
+        import asyncio, re
+        import httpx
+        from classroom.app import app
+        from classroom.desktop import VERSION
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://127.0.0.1:8767') as client:
+                return (await client.get('/api/state')).json()
+        self.assertEqual(asyncio.run(run())['version'], VERSION)
+        cargo = (Path(__file__).resolve().parents[1] / 'desktop/Cargo.toml').read_text()
+        self.assertEqual(re.search(r'^version = "([^"]+)"', cargo, re.M).group(1), VERSION)
