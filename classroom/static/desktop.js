@@ -85,7 +85,6 @@ async function requestDesktopExit() {
   } catch (e) { flash('无法确认处理状态，请恢复连接后再退出：' + e.message); }
 }
 $('exit-cancel').onclick = () => $('desktop-exit').close();
-$('desktop-quit').onclick = requestDesktopExit;
 $('exit-confirm').onclick = async () => {
   $('exit-confirm').disabled = true; $('exit-cancel').disabled = true;
   try {
@@ -109,8 +108,7 @@ async function connectDesktop() {
   try {
     nativeInfo = await window.__TAURI__.core.invoke('desktop_info');
     await window.__TAURI__.event.listen('desktop-close-requested', requestDesktopExit);
-    $('desktop-quit').hidden = false;
-    $('desktop-version').textContent = (nativeInfo.development ? '桌面开发版 · ' : '本机独立版 · ') + nativeInfo.version;
+    $('desktop-version').textContent = (nativeInfo.development ? '开发版 ' : '') + nativeInfo.version;
   } catch (e) { $('desktop-version').textContent = '桌面连接未完成'; $('settings-message').textContent = String(e); }
 }
 // Update the return-to-live shortcut without changing the page being read.
