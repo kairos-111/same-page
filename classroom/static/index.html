@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Same Page</title>
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg?v=0.10.2">
   <link rel="stylesheet" href="/static/style.css?v=0.10.2">
 </head>
 <body class="app-shell">
 <aside class="app-sidebar" aria-label="应用导航">
-  <div class="sidebar-brand"><span class="logo" aria-label="Same Page">SP</span><div><strong>Same Page</strong><small>本地 AI 字幕与翻译</small></div></div>
+  <div class="sidebar-brand"><img class="logo" src="/static/icon.svg?v=0.10.2" alt="Same Page" width="34" height="34"><div><strong>Same Page</strong><small>本地 AI 字幕与翻译</small></div></div>
   <nav>
     <button class="nav-item selected" data-page="start"><span aria-hidden="true">◉</span>开始翻译</button>
     <button class="nav-item" data-page="library"><span aria-hidden="true">▤</span>我的记录<span id="library-count" class="nav-count"></span></button>
@@ -25,7 +26,7 @@
 <!-- 开始页：只回答一个问题——声音从哪来 -->
 <section id="start-view" class="view" aria-labelledby="start-heading">
   <header class="start-header">
-    <div class="brand"><span class="logo" aria-hidden="true">SP</span><span class="brand-name">Same Page</span></div>
+    <div class="brand"><img class="logo" src="/static/icon.svg?v=0.10.2" alt="" width="34" height="34"><span class="brand-name">Same Page</span></div>
     <span id="conn" class="conn" role="status"><i></i><span id="conn-text">正在连接…</span></span>
   </header>
 
@@ -121,7 +122,7 @@
   <section class="settings-card"><div class="section-heading"><h2>识别与翻译</h2><span>模型偏好</span></div><label class="setting-row"><span><strong>默认识别模型</strong><small>下次开始翻译时生效；不会切换正在进行的翻译。</small></span><select id="settings-model"><option value="small">标准 · Small</option><option value="turbo">更准 · Turbo</option></select></label><div class="setting-row engine-panel"><span><strong>本地模型</strong><small>开始翻译时会自动加载所需模型，也可以提前启动；启动模型不会开始录音。</small></span><div class="model-controls"><button id="models-start" class="engine-start" type="button">一键启动</button><button id="models-stop" class="engine-stop" type="button" title="停止全部模型" aria-label="停止全部模型">全部停止</button></div></div><div id="model-list" class="model-list"><p class="engine-placeholder">正在读取状态…</p></div><p id="model-control-message" role="status"></p><p id="model-settings-note" class="settings-note">两个识别模型可以同时加载，翻译时只使用所选的一个；翻译和收尾期间不能启停。此开发版使用本机已准备的模型。</p></section>
   <section class="settings-card"><h2>字幕阅读</h2><label class="setting-row"><span><strong>默认只看译文</strong><small>也可以在字幕页随时切换。</small></span><input id="settings-zh-only" type="checkbox" role="switch"></label><div class="setting-row"><span><strong>字号与显示</strong><small>原文与译文字号在字幕页分别调整，自动记住上次选择。</small></span><span>跟随系统深浅色</span></div></section>
   <section class="settings-card"><h2>记录与存储</h2><div class="setting-row"><span><strong>记录文件</strong><small id="storage-summary">正在读取…</small></span><button class="btn-ghost" data-folder="courses">在访达打开</button></div><div class="setting-row"><span><strong>模型文件</strong><small>独立于记录保存；不会随删除记录而删除。</small></span><button class="btn-ghost" data-folder="models">打开目录</button></div><div class="setting-row"><span><strong>术语表</strong><small>编辑 <code>outputs/课程术语.csv</code>（source 或 english、russian 列写原词，chinese 列写译法），下次开始翻译时生效。</small></span><button class="btn-ghost" data-folder="terms">打开术语目录</button></div><p class="settings-note">每次翻译结束后选择是否保留录音。模型与记录内容均在本机处理，此版本未接入云端 API。</p></section>
-  <section class="settings-card about-brand"><div class="about-heading"><span class="logo" aria-hidden="true">SP</span><div><h2>关于 Same Page</h2><p class="about-slogan">每一句，都跟得上。</p></div></div>
+  <section class="settings-card about-brand"><div class="about-heading"><img class="logo" src="/static/icon.svg?v=0.10.2" alt="" width="34" height="34"><div><h2>关于 Same Page</h2><p class="about-slogan">每一句，都跟得上。</p></div></div>
     <p class="settings-note">本地 AI 驱动的实时双语字幕与翻译工具。支持英语→中文、俄语→中文和英俄中混合→中文；混合模式仍需按实际音频核对效果。</p>
     <details class="about-vision"><summary>产品介绍与支持范围 <span>三种模式</span></summary>
       <p><strong>本地 AI 驱动的英俄中三语实时传译工具。</strong></p>
