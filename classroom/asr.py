@@ -2,6 +2,8 @@
 from .asr_recovery import RecoveryGuard
 from .asr_quality import GuardedDecoder, RejectedRecognition, RecognitionPending
 
+BACKLOG_NO_RETRY = 5  # seconds of unrecognised audio
+
 class WhisperAdapter:
     def __init__(self, model_path, hint='', language_mode='en'):
         import mlx.core as mx
@@ -55,10 +57,11 @@ class WhisperAdapter:
             word_timestamps=True,path_or_hf_repo=self.asr.model_size_or_path)
 
     def set_backlog(self, seconds):
-        # Called only between completed worker calls. At high lag, preserve an
-        # explicit gap rather than spend two additional decodes and compound lag.
-        self.recovery.allow_recovery = seconds < 15
-        self.decoder.allow_recovery = seconds < 15
+        # Called only between completed worker calls. Once more than a few seconds
+        # behind, keep an explicit review gap instead of spending extra decodes that
+        # would push every following sentence later.
+        self.recovery.allow_recovery = seconds < BACKLOG_NO_RETRY
+        self.decoder.allow_recovery = seconds < BACKLOG_NO_RETRY
 
     def process(self, data, end_seconds):
         np = self.np

@@ -647,7 +647,9 @@ function renderLive() {
   renderRecordTools();
 
   $('live-empty').hidden = rows.size > 0;
-  $('live-empty-text').textContent = EMPTY_TEXT[s.state] || '';
+  $('live-empty-text').textContent = s.state === 'loading' && s.capture_ready && s.source !== 'file'
+    ? '已经在收音。模型加载好后，这段时间说的话会补上字幕…'
+    : EMPTY_TEXT[s.state] || '';
   $('live-empty').querySelector('.pulse').hidden = !active;
 
   $('back').hidden = active;
@@ -698,6 +700,9 @@ function renderBanner() {
   else if (s?.error) { text = s.error + (s.integrity?.warning ? ' ' + s.integrity.warning : ''); kind = 'error'; }
   else if (s?.state === 'draining') { text = '已停止收音，正在把最后几句处理完并保存，请稍等，不要关闭启动程序。'; kind = 'info'; }
   else if (s?.state === 'interrupted') { text = '会话中断了。已收到的声音保存在本机，可以用「导入文件」重新处理。'; kind = 'error'; }
+  else if ((s?.state === 'loading' || s?.state === 'running') && s.source !== 'file' && s.capture_ready === false) {
+    text = '正在启动' + (s.source === 'system' ? '电脑声音采集' : '麦克风') + '…蓝牙耳机可能要几秒，接通后马上开始记录。'; kind = 'info';
+  }
   else if (s?.state === 'running' && s.fast_import) {
     const total = num(s.audio_seconds), done = Math.min(total, num(s.processed_seconds));
     text = s.input_done && total

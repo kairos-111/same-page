@@ -14,7 +14,7 @@ from .subtitles import SegmentComposer
 from .chinese import simplified_segment
 from .translation import Glossary,LocalTranslator,RevisionQueue,apply_translation,preview_due,validate_translation,critical_signature
 from .process import terminate_and_drain
-from .languages import MODES,chinese_passthrough,source_language,text_languages
+from .languages import MODES,chinese_passthrough,source_language,text_languages,clean_asr_text
 
 class ClassSession:
     def __init__(self,runtime,source,model,title,upload=None,realtime=True,language_mode='en'):
@@ -66,6 +66,10 @@ class ClassSession:
         # Imported files are decoded as fast as possible; there is no live speaker to keep up with.
         self.fast_import=source=='file' and not realtime
         self.recognize_limit=None
+        # The microphone helper can take seconds to start (e.g. Bluetooth headsets);
+        # nothing is heard before it reports ready.
+        self.capture_ready=False
+        self.audio_started=False
 
     def event(self,obj,persist=True):
         obj={**obj,'session_id':self.id,'session_elapsed':time.monotonic()-self.clock,'wall_time':time.time()}
@@ -108,23 +112,25 @@ class ClassSession:
             memory_bytes=rss,source=self.source,model=self.model,language_mode=self.language_mode,target='zh',
             asr_unresolved=self.asr_unresolved,
             processed_seconds=self.processed,input_done=self.input_done,fast_import=self.fast_import,
+            capture_ready=self.capture_ready or self.audio_started or self.source=='file',
             final_count=sum(s['final'] for s in self.segments.values()))
 
     async def run(self):
         try:
+            # Start listening while the models load: speech is spooled to disk and
+            # recognised once the models are ready, instead of being missed.
+            self.source_task=asyncio.create_task(self.capture())
+            self.monitor_task=asyncio.create_task(self.monitor())
+            self.tasks=[self.source_task,self.monitor_task]
             await self.runtime.ensure_translation()
             args=(self.model,self.glossary.asr_hint(self.language_mode))
             if self.language_mode!='en':args+= (self.language_mode,)
             self.asr=await self.runtime.load_asr(*args)
             self.state='running'
-            self.clock=time.monotonic()
-            self.store.metadata['audio_started_at']=time.time()
             self.event(self.status())
-            self.source_task=asyncio.create_task(self.capture())
             self.asr_task=asyncio.create_task(self.recognize())
             self.translation_task=asyncio.create_task(self.translate())
-            self.monitor_task=asyncio.create_task(self.monitor())
-            self.tasks=[self.source_task,self.asr_task,self.translation_task,self.monitor_task]
+            self.tasks+=[self.asr_task,self.translation_task]
             await asyncio.gather(self.source_task,self.asr_task)
             self.queue.close()
             await self.translation_task
@@ -192,6 +198,12 @@ class ClassSession:
 
     def append_audio(self,data):
         if not data:return
+        if not self.audio_started:
+            # Audio time zero is when sound first arrives, so delays are measured
+            # from what was actually heard, not from pressing Start.
+            self.audio_started=True
+            self.clock=time.monotonic()-len(data)/32000
+            self.store.metadata['audio_started_at']=time.time()-len(data)/32000
         self.store.audio.append(data)
         import numpy as np
         audio=np.frombuffer(data,dtype='<i2').astype(np.float32)/32768
@@ -214,6 +226,9 @@ class ClassSession:
                     try:
                         obj=json.loads(message)
                         if obj.get('type')=='error':self.error=obj['message']
+                        elif obj.get('type')=='ready':
+                            self.capture_ready=True
+                            self.event(self.status(),persist=False)
                     except json.JSONDecodeError:pass
                     self.event(dict(type='capture',message=message))
             stderr_task=asyncio.create_task(errors())
@@ -306,6 +321,15 @@ class ClassSession:
 
     def on_segment(self,event):
         key=event['id']
+        if event.get('asr_status') != 'unresolved':
+            cleaned,garbage=clean_asr_text(event.get('source',''))
+            if garbage:
+                if not event.get('final') and key not in self.segments:
+                    return  # A junk preview is simply not shown.
+                # Junk that would replace or finalise a sentence becomes a review gap.
+                event={**event,'asr_status':'unresolved','asr_reason':'garbage_text','source':'','source_raw':event.get('source','')}
+            elif cleaned!=event.get('source'):
+                event={**event,'source':cleaned,'source_raw':event.get('source','')}
         if event.get('asr_status') == 'unresolved':
             self.asr_unresolved+=1
             self.queue.pending.pop(key, None)
@@ -399,7 +423,7 @@ class ClassSession:
             self.event(dict(type='translation_attempt',**timing,outcome='started'))
             outcome='error';message=''
             try:
-                text=validate_translation(await self.translator.translate(item['source'],list(self.context)))
+                text=validate_translation(await self.translator.translate(item['source'],list(self.context),item['final']))
                 previous=self.segments.get(item['id'])
                 latest=apply_translation(previous,item,text)
                 if latest is None:
@@ -425,6 +449,9 @@ class ClassSession:
                 if isinstance(e,httpx.TimeoutException):
                     outcome='request_timeout_compute_unconfirmed'
                     message='翻译请求超时；未确认模型计算已停止'
+                    # A confirmed sentence gets one more try once the slot is free.
+                    if item['final'] and not item.get('auto_retry'):
+                        self.queue.put(dict(item,retry=True,auto_retry=True))
                 latest=self.segments.get(item['id'])
                 if latest and latest['revision']==item['revision']:
                     latest=dict(latest,translation_error=message);self.segments[item['id']]=latest;self.event(latest)

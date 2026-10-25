@@ -24,7 +24,7 @@ class GateTranslator:
     async def close(self):
         pass
 
-    async def translate(self,text,context):
+    async def translate(self,text,context,final=True):
         self.calls.append(text)
         self.started.put_nowait(text)
         return await self.release.get()

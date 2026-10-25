@@ -124,6 +124,9 @@ class SpeechLanguageRouter:
             # A language-specific history prompt must never spill into another span.
             kwargs['initial_prompt']=''
             sample=audio[start:end]
+            if 'sample_len' in options:
+                from .asr_quality import token_limit
+                kwargs['sample_len']=token_limit(len(sample)/16000)
             key=(round(offset*16000)+start,round(offset*16000)+end,language,
                 options.get('temperature',0),hashlib.blake2b(sample.tobytes(),digest_size=16).digest())
             hit=key in self.decode_cache

@@ -9,6 +9,12 @@ MAX_WORDS = 4096
 MAX_RECOVERY_SECONDS = 30
 
 
+def token_limit(duration):
+    """Most tokens a window of speech can need. Fast speech is ~5 tokens a second;
+    a repetition loop otherwise runs to Whisper's 224-token ceiling and costs seconds."""
+    return int(min(224, 24 + math.ceil(duration * 12)))
+
+
 def text_issue(text):
     if len(text) > 32768:
         return 'output_limit'
@@ -108,7 +114,8 @@ class GuardedDecoder:
             try:
                 kwargs=dict(language=language,task='transcribe',initial_prompt=prompt,
                     word_timestamps=True,condition_on_previous_text=False,
-                    temperature=temperature,path_or_hf_repo=self.model_path)
+                    temperature=temperature,path_or_hf_repo=self.model_path,
+                    sample_len=token_limit(duration))
                 if self.language_router:
                     kwargs.pop('language')
                     result=self.language_router.decode(self.model,audio,self.offset,**kwargs)

@@ -112,12 +112,21 @@ class Glossary:
         allowed={'en'} if language_mode=='en' else {'ru'} if language_mode=='ru' else {'en','ru','zh'}
         return ', '.join(t for t in self.asr_terms if set(text_languages(t)) <= allowed)[:800]
 
+PREVIEW_TIMEOUT = 3.0
+FINAL_TIMEOUT = 6.0
+
+
+def token_budget(text):
+    units = len(language_units(text))
+    return min(320, 32 + 3 * units)
+
+
 class LocalTranslator:
     def __init__(self, url, glossary):
         self.client = httpx.AsyncClient(base_url=url, timeout=httpx.Timeout(35, connect=3),trust_env=False)
         self.glossary = glossary
 
-    async def translate(self, text, context=()):
+    async def translate(self, text, context=(), final=True):
         text=simplified(text)
         if chinese_passthrough(text) or not any(c.isalpha() for c in text):
             return text
@@ -130,13 +139,13 @@ class LocalTranslator:
                 if has_foreign_letters(part):
                     leading=part[:len(part)-len(part.lstrip())]
                     trailing=part[len(part.rstrip()):] if part.rstrip()!=part else ''
-                    translated=await self._request(part.strip(),context,source_context=text)
+                    translated=await self._request(part.strip(),context,source_context=text,final=final)
                     output.append(leading+translated+trailing)
                 else:output.append(part)
             return simplified(''.join(output).strip())
-        return await self._request(text,context)
+        return await self._request(text,context,final=final)
 
-    async def _request(self, text, context=(), source_context=''):
+    async def _request(self, text, context=(), source_context='', final=True):
         terms = self.glossary.matching(text)
         prompt = ''
         if terms:
@@ -154,8 +163,10 @@ class LocalTranslator:
         r = await self.client.post('/v1/chat/completions', headers=headers, json={
             'messages':[{'role':'user','content':prompt}], 'temperature':0.1,
             'top_p':0.6,'top_k':20,'repeat_penalty':1.05,
-            'max_tokens':min(384,max(64,len(text))), 'stream':False,
-        })
+            # A translation is never much longer than its source; a hard bound stops a
+            # runaway generation from holding the single model slot for seconds.
+            'max_tokens':token_budget(text), 'stream':False,
+        }, timeout=httpx.Timeout(FINAL_TIMEOUT if final else PREVIEW_TIMEOUT, connect=3))
         r.raise_for_status()
         choice = r.json()['choices'][0]
         if choice.get('finish_reason') != 'stop':

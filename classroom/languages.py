@@ -34,3 +34,25 @@ def join_asr_words(words):
     text=re.sub('(?<=['+HAN+']) +(?=['+HAN+'])','',text)
     text=re.sub('(?<=[（【《]) +|(?<=[，。；：！？、]) +(?=['+HAN+'])','',text)
     return text
+
+# Characters a supported language can contain: Latin (with accents), Cyrillic,
+# Chinese, digits, whitespace and ordinary punctuation. Anything else in a
+# transcript (stray Hangul jamo, kana dots, Arabic, music notes, box drawing...)
+# is a known Whisper failure mode in these modes, not speech.
+_ALLOWED = re.compile(r"[A-Za-zÀ-ɏЀ-ԯ" + HAN + r"0-9\s.,!?;:'\"()\[\]%&+\-/…–—，。！？；：“”‘’（）、《》·]")
+_MEANINGFUL = re.compile(r"[A-Za-zÀ-ɏЀ-ԯ" + HAN + r"0-9]")
+
+
+def clean_asr_text(text):
+    """Return (cleaned_text, is_garbage) for one recognised sentence.
+
+    Removes characters no supported language uses and runs of four or more of the
+    same punctuation mark. Words are never removed. A sentence left with no Chinese
+    character and fewer than two letters or digits is garbage: not shown or translated.
+    """
+    text = str(text or '')
+    kept = ''.join(c for c in text if _ALLOWED.fullmatch(c))
+    kept = re.sub(r'([^\w\s])(?:\s*\1){3,}', '', kept)
+    kept = re.sub(r'\s+', ' ', kept).strip()
+    # One Chinese character is a real reply (好, 嗯); Latin/Cyrillic need two.
+    return kept, not HAN_RE.search(kept) and len(_MEANINGFUL.findall(kept)) < 2
