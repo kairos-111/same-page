@@ -61,7 +61,12 @@ class QualityTests(unittest.TestCase):
         result=decoder(range(320000))
         self.assertEqual(result[0]['text'], 'This is a normal sentence.')
         self.assertEqual(model.call_count, 1)
-        self.assertEqual(decoder.events, [])
+        self.assertEqual(len(decoder.events), 1)
+        timing=decoder.events[0]
+        self.assertEqual(timing['type'], 'asr_decode')
+        self.assertEqual(timing['audio_seconds'], 20)
+        self.assertGreaterEqual(timing['seconds'], 0)
+        self.assertFalse(timing['recovery'])
 
     def test_recovery_uses_fresh_neutral_prompt_and_validates(self):
         model=Mock(side_effect=[hypothesis('the value of '*30),hypothesis('A fresh valid sentence.')])
@@ -74,9 +79,12 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(second.kwargs['initial_prompt'],'An English lecture.')
         self.assertEqual(second.kwargs['temperature'],.4)
         self.assertFalse(second.kwargs['condition_on_previous_text'])
-        self.assertEqual(decoder.events[0]['status'],'recovered')
-        self.assertEqual(decoder.events[0]['start'],100)
-        self.assertEqual(decoder.events[0]['end'],120)
+        timings=[e for e in decoder.events if e['type']=='asr_decode']
+        self.assertEqual([e['recovery'] for e in timings],[False,True])
+        recovery=decoder.events[-1]
+        self.assertEqual(recovery['status'],'recovered')
+        self.assertEqual(recovery['start'],100)
+        self.assertEqual(recovery['end'],120)
 
     def test_recovery_exhaustion_empty_error_and_duration_cap(self):
         bad=hypothesis('the minimize '*35)

@@ -19,5 +19,15 @@ vm.runInContext(source.slice(source.indexOf('async function openHistory'),source
   assert.deepEqual(seen[3],['show','library']);
   await context.openHistory('live',true);
   assert.equal(context.viewingHistory,false);
-  console.log('history read and return to current session checks passed');
+  let resolve;
+  context.getJSON=()=>new Promise(r=>{resolve=r;});
+  const opening=context.openHistory('delayed');
+  const desktop=fs.readFileSync('classroom/static/desktop.js','utf8');
+  vm.runInContext(desktop.slice(desktop.indexOf('async function navigatePage'),desktop.indexOf("document.querySelectorAll")),context);
+  await context.navigatePage('settings');
+  resolve({session:{id:'delayed',state:'completed',historical:true},segments:[]});
+  await opening;
+  assert.equal(seen.at(-1)[1],'settings');
+  assert.equal(context.viewingHistory,false);
+  console.log('history read, return and navigation race checks passed');
 })().catch(e => {console.error(e);process.exitCode=1;});

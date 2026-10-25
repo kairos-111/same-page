@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import time
 import httpx
+from .chinese import simplified
+from .languages import language_units,HAN,FOREIGN,HAN_RE,chinese_passthrough,text_languages,has_foreign_letters
 
 def apply_translation(latest, item, text):
     """A prefix translation may fill a preview, but can never replace a newer result."""
@@ -17,11 +19,13 @@ def apply_translation(latest, item, text):
     boundary=latest['source'][len(item['source']):len(item['source'])+1]
     if not current and (item['final'] or not prefix or (boundary and boundary.isalnum())):
         return None
-    return dict(latest,translation=text,translated_revision=item['revision'],translation_error='')
+    return dict(latest,translation=simplified(text),translated_revision=item['revision'],translation_error='')
 
 def critical_signature(text):
     # Preserve order/count: changing a number, polarity, condition or unit is material.
-    return re.findall(r"[+-]?\d+(?:[.,]\d+)*(?:e[+-]?\d+)?|(?<![a-z])(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|half|quarter|negative|positive|neither|nor|no|not|never|without|cannot|unless|if|only|except|less|more|before|after|must|may|mg|g|kg|ml|l|mm|cm|m|km|ms|s|hz|khz|mhz|percent|milligrams?|grams?|kilograms?|milliliters?|liters?|meters?|seconds?|minutes?|hours?|degrees?|millimet(?:er|re)s?|centimet(?:er|re)s?|metres?|volts?|watts?|pa|kpa|mpa)(?![a-z])|n['’]t|[%°µμ<>=]", text.lower())
+    latin = re.findall(r"[+-]?\d+(?:[.,]\d+)*(?:e[+-]?\d+)?|(?<![a-z])(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|half|quarter|negative|positive|neither|nor|no|not|never|without|cannot|unless|if|only|except|less|more|before|after|must|may|mg|g|kg|ml|l|mm|cm|m|km|ms|s|hz|khz|mhz|percent|milligrams?|grams?|kilograms?|milliliters?|liters?|meters?|seconds?|minutes?|hours?|degrees?|millimet(?:er|re)s?|centimet(?:er|re)s?|metres?|volts?|watts?|pa|kpa|mpa)(?![a-z])|n['’]t|[%°µμ<>=]", text.lower())
+    extra=re.findall(r'(?<![A-Za-z\u0400-\u052f])(?:не|нет|никогда|без|если|кроме|только|нельзя|должен|менее|более|мг|г|кг|мл|л|мм|см|м|км|мс|с|гц|кгц|мгц|процентов|градусов)(?![A-Za-z\u0400-\u052f])|不|没|未|无|非|禁止|如果|除非|仅|至少|至多|增加|减少|毫克|千克|公斤|毫升|分钟|小时|摄氏度',text.lower())
+    return latin+extra
 
 
 def preview_due(item, previous, now):
@@ -29,13 +33,13 @@ def preview_due(item, previous, now):
         return True
     text=item['source']
     if previous is None:
-        return len(text.split()) >= 4 or bool(critical_signature(text))
+        return len(language_units(text)) >= 4 or bool(critical_signature(text))
     if text == previous['source']:
         return False
     if critical_signature(text) != critical_signature(previous['source']):
         return True
-    old=previous['source'].split()
-    new=text.split()
+    old=language_units(previous['source'])
+    new=language_units(text)
     common=0
     for a,b in zip(old,new):
         if a != b:break
@@ -53,7 +57,7 @@ def validate_translation(content):
     content=re.sub(r'<think>.*?</think>','',content,flags=re.S).strip()
     if not content or not re.search(r'[\w\u4e00-\u9fff]',content):
         raise RuntimeError('本地翻译模型返回空内容')
-    return content
+    return simplified(content)
 
 
 class RevisionQueue:
@@ -92,7 +96,7 @@ class Glossary:
         if Path(path).exists():
             with Path(path).open(encoding='utf-8-sig', newline='') as f:
                 for row in csv.DictReader(f):
-                    en,zh = row.get('english','').strip(),row.get('chinese','').strip()
+                    en,zh = (row.get('source') or row.get('english') or row.get('russian') or '').strip(),row.get('chinese','').strip()
                     if en and zh and len(en)<120 and len(zh)<120:
                         self.terms.append((en,zh))
                         # Legacy CSVs remain useful for translation, but no longer
@@ -102,10 +106,11 @@ class Glossary:
         self.terms = self.terms[:1000]
 
     def matching(self, text):
-        return [(en,zh) for en,zh in self.terms if re.search(r'(?<!\w)'+re.escape(en)+r'(?!\w)',text,re.I)][:20]
+        return [(en,zh) for en,zh in self.terms if re.search(r'(?<![A-Za-z\u0400-\u052f])'+re.escape(en)+r'(?![A-Za-z\u0400-\u052f])',text,re.I)][:20]
 
-    def asr_hint(self):
-        return ', '.join(self.asr_terms)[:800]
+    def asr_hint(self, language_mode='en'):
+        allowed={'en'} if language_mode=='en' else {'ru'} if language_mode=='ru' else {'en','ru','zh'}
+        return ', '.join(t for t in self.asr_terms if set(text_languages(t)) <= allowed)[:800]
 
 class LocalTranslator:
     def __init__(self, url, glossary):
@@ -113,14 +118,35 @@ class LocalTranslator:
         self.glossary = glossary
 
     async def translate(self, text, context=()):
+        text=simplified(text)
+        if chinese_passthrough(text) or not any(c.isalpha() for c in text):
+            return text
+        if HAN_RE.search(text):
+            # Protect Chinese spans in code. Translate whole foreign spans with the
+            # original mixed sentence as context; never route Chinese through English.
+            parts=re.split('(['+HAN+']+)',text)
+            output=[]
+            for part in parts:
+                if has_foreign_letters(part):
+                    leading=part[:len(part)-len(part.lstrip())]
+                    trailing=part[len(part.rstrip()):] if part.rstrip()!=part else ''
+                    translated=await self._request(part.strip(),context,source_context=text)
+                    output.append(leading+translated+trailing)
+                else:output.append(part)
+            return simplified(''.join(output).strip())
+        return await self._request(text,context)
+
+    async def _request(self, text, context=(), source_context=''):
         terms = self.glossary.matching(text)
         prompt = ''
         if terms:
             prompt += '参考下面的术语翻译：\n'+'\n'.join(f'{en} 翻译成 {zh}' for en,zh in terms)+'\n'
         # Short unfinished fragments easily invite a small model to repeat the context.
         # Restrict context to complete, substantive sentences and separate it explicitly.
-        if context and len(text.split())>=10 and re.search(r'[.!?]$',text.strip()):
+        if context and len(language_units(text))>=10 and re.search(r'[.!?。！？]$',text.strip()):
             prompt += '【背景信息，仅供理解，不要翻译】\n'+'\n'.join(context)[-1200:]+'\n'
+        if source_context:
+            prompt += '【完整原句，仅供理解；中文由程序原样保留，不要重复输出】\n'+source_context[-1600:]+'\n'
         prompt += '将【待翻译文本】翻译为简体中文，只输出该文本的译文，不要解释、续写或重复背景信息。文本可能尚未结束，请保留其不完整性。\n【待翻译文本】\n'+text
         from .paths import WORK
         key_file=WORK/'llama-key'

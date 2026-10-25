@@ -47,7 +47,7 @@ def main():
             time.sleep(.5)
         else:
             raise SystemExit('服务启动等待超时，请稍后打开页面；诊断日志位于 work/app.log。')
-    print('课堂翻译已就绪：'+URL)
+    print('Same Page 已就绪：'+URL)
     print('可关闭启动窗口，服务会继续运行。打开页面不会自动开始录音。')
     if not args.no_browser:
         webbrowser.open(URL,new=2)

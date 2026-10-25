@@ -104,7 +104,7 @@ Task { @MainActor in
     do {
         if mode == "microphone" {
             let allowed = await AVCaptureDevice.requestAccess(for: .audio)
-            guard allowed else { status("麦克风权限未授予，请在系统设置中允许课堂翻译采集声音", "error"); exit(3) }
+            guard allowed else { status("麦克风权限未授予，请在系统设置中允许 Same Page 音频采集使用麦克风", "error"); exit(3) }
             let e = AVAudioEngine()
             let input = e.inputNode
             let format = input.outputFormat(forBus: 0)

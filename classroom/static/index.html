@@ -4,46 +4,49 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>听课</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <title>Same Page</title>
+  <link rel="stylesheet" href="/static/style.css?v=0.10.2">
 </head>
 <body class="app-shell">
 <aside class="app-sidebar" aria-label="应用导航">
-  <div class="sidebar-brand"><span class="logo">听</span><div><strong>听课</strong><small>你的本地课堂助手</small></div></div>
+  <div class="sidebar-brand"><span class="logo" aria-label="Same Page">SP</span><div><strong>Same Page</strong><small>本地 AI 字幕与翻译</small></div></div>
   <nav>
-    <button class="nav-item selected" data-page="start"><span aria-hidden="true">◉</span>开始听课</button>
-    <button class="nav-item" data-page="library"><span aria-hidden="true">▤</span>课程库<span id="library-count" class="nav-count"></span></button>
+    <button class="nav-item selected" data-page="start"><span aria-hidden="true">◉</span>开始翻译</button>
+    <button class="nav-item" data-page="library"><span aria-hidden="true">▤</span>我的记录<span id="library-count" class="nav-count"></span></button>
     <button class="nav-item" data-page="settings"><span aria-hidden="true">⚙</span>设置</button>
   </nav>
-  <button id="resume-class" class="resume-class" hidden>● 返回正在进行的课</button>
-  <div class="sidebar-bottom"><span class="local-badge">● 本地处理</span><small>声音留在你的电脑上</small><button id="desktop-quit" hidden>退出听课</button><small id="desktop-version">开发版 · 0.6.0</small></div>
+  <button id="resume-class" class="resume-class" hidden>● 返回正在进行的翻译</button>
+  <button id="engine-status" class="engine-status" type="button" title="查看和管理本地模型"><span class="engine-dot" aria-hidden="true"></span><span class="engine-status-text"><small>本地模型</small><span id="engine-summary">连接中</span></span><span aria-hidden="true" class="engine-status-go">›</span></button>
+  <div class="sidebar-bottom"><span class="local-badge">● 本地处理</span><small>声音留在你的电脑上</small><button id="desktop-quit" hidden>退出 Same Page</button><small id="desktop-version">开发版 · 0.10.2</small></div>
 </aside>
 
 <div id="shell-notice" class="shell-notice" role="status" hidden></div>
 <!-- 开始页：只回答一个问题——声音从哪来 -->
 <section id="start-view" class="view" aria-labelledby="start-heading">
   <header class="start-header">
-    <div class="brand"><span class="logo" aria-hidden="true">听</span><span class="brand-name">听课</span></div>
+    <div class="brand"><span class="logo" aria-hidden="true">SP</span><span class="brand-name">Same Page</span></div>
     <span id="conn" class="conn" role="status"><i></i><span id="conn-text">正在连接…</span></span>
   </header>
 
   <div class="start-body">
-    <p class="eyebrow">准备好，开始一堂新课</p>
-    <h1 id="start-heading">专注听课，让字幕跟上。</h1>
-    <p class="lead">选择声音来源，英文与中文一起呈现。识别、翻译和保存都在本机完成。</p>
+    <p class="eyebrow">声音，从这里开始</p>
+    <h1 id="start-heading">每一句，都跟得上。</h1>
+    <p class="lead">用本地 AI，把正在听的内容变成原文字幕与译文。</p>
+
+    <div class="capability-line"><span>本地 AI · 离线可用 · 记录可回看</span></div>
 
     <div class="sources" role="radiogroup" aria-label="声音来源">
       <button type="button" class="source" role="radio" aria-checked="true" data-source="microphone">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-        <strong>教室里</strong><span>用麦克风听老师讲</span>
+        <strong>麦克风</strong><span>获取当前输入设备的声音</span>
       </button>
       <button type="button" class="source" role="radio" aria-checked="false" data-source="system">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
-        <strong>网课 / 视频</strong><span>听电脑正在播放的声音</span>
+        <strong>电脑声音</strong><span>听电脑正在播放的声音</span>
       </button>
       <button type="button" class="source" role="radio" aria-checked="false" data-source="file">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M10 17v-5l4 2.5z"/></svg>
-        <strong>已有录音</strong><span>导入音频或视频文件</span>
+        <strong>导入文件</strong><span>导入音频或视频文件</span>
       </button>
     </div>
     <p id="source-hint" class="source-hint"></p>
@@ -51,53 +54,72 @@
     <label id="file-box" class="file-box" hidden>
       <input type="file" id="file" accept="audio/*,video/*">
       <span id="file-text">点这里选文件，或把文件拖进来</span>
-      <small>最大 1 GB，按原速读取</small>
+      <small>最大 1 GB，会尽快处理，不用等完原来的时长</small>
     </label>
 
+    <div class="lang-row">
+      <span id="lang-label" class="row-label">识别语言</span>
+      <div id="language-mode" class="langs" role="radiogroup" aria-labelledby="lang-label">
+        <button type="button" class="lang" role="radio" data-mode="en" aria-checked="true">英语</button>
+        <button type="button" class="lang" role="radio" data-mode="ru" aria-checked="false">俄语</button>
+        <button type="button" class="lang" role="radio" data-mode="mixed" aria-checked="false">英俄中混合<small>试用</small></button>
+      </div>
+      <span class="lang-target">→ 中文</span>
+    </div>
+    <p id="language-mode-note" class="language-mode-note"></p>
+
     <div class="go">
-      <input id="title" class="title-input" placeholder="课程名称（可不填）" maxlength="100" autocomplete="off" aria-label="课程名称">
-      <button id="start" type="button" class="btn-start" disabled>开始听课</button>
+      <input id="title" class="title-input" placeholder="记录名称（可不填）" maxlength="100" autocomplete="off" aria-label="记录名称">
+      <select id="start-model" class="start-model" aria-label="识别模型" title="识别模型"><option value="small">标准 · Small</option><option value="turbo">更准 · Turbo</option></select>
+      <button id="start" type="button" class="btn-start" disabled aria-keyshortcuts="Meta+Enter Control+Enter"><span id="start-label">开始翻译</span><kbd class="start-kbd" aria-hidden="true">⌘↵</kbd></button>
     </div>
     <p id="start-note" class="start-note" role="status"></p>
 
-    <details class="more">
-      <summary>识别设置 <span id="model-tag" class="model-tag"></span></summary>
-      <div class="more-body">
-        <div class="model-choice" role="radiogroup" aria-label="识别模型">
-          <label><input type="radio" name="model" value="small" checked><span><b>快速</b>Whisper Small，推荐日常使用</span></label>
-          <label><input type="radio" name="model" value="turbo"><span><b>更准</b>Whisper Turbo，较慢，适合对照</span></label>
-        </div>
-        <p class="more-note">专业词汇可写进 <code>outputs/课程术语.csv</code>（english、chinese 两列），下次开始时生效。</p>
-      </div>
-    </details>
-
     <div id="last" class="last" hidden>
-      <div><span class="last-label">上一堂课</span><strong id="last-title"></strong><span id="last-meta" class="last-meta"></span></div>
-      <button id="last-open" type="button" class="btn-ghost">查看字幕</button>
+      <div><span class="last-label">上一次记录</span><strong id="last-title"></strong><span id="last-meta" class="last-meta"></span></div>
+      <button id="last-open" type="button" class="btn-ghost">查看记录</button>
     </div>
 
-    <div class="home-bottom"><div><strong>每一堂课，都值得留住。</strong><p>字幕与原声分开管理，课后随时回来继续看。</p></div><button type="button" class="btn-ghost" id="home-library">打开课程库 →</button></div>
+    <div class="home-bottom"><div><strong>听见的内容，随时回来再看。</strong><p>字幕与原声分开管理，录音是否保留由你决定。</p></div><button type="button" class="btn-ghost" id="home-library">打开我的记录 →</button></div>
   </div>
 </section>
 
 <section id="library-view" class="workspace-view" hidden aria-labelledby="library-heading">
-  <header class="workspace-header"><div><p class="eyebrow">在这里，继续每一次学习</p><h1 id="library-heading">课程库</h1><p class="workspace-description">阅读双语字幕，查看录音，整理你的课堂记录。</p></div><button id="library-new" class="btn-primary">＋ 开始新课</button></header>
-  <div class="library-toolbar"><label class="search-box"><span>⌕</span><input id="history-search" type="search" placeholder="搜索课程名称" aria-label="搜索课程名称"></label><span id="history-summary"></span></div>
+  <header class="workspace-header"><div><p class="eyebrow">把听过的内容，留在这里</p><h1 id="library-heading">我的记录</h1><p class="workspace-description">阅读双语字幕，查看录音，整理你的翻译记录。</p></div><button id="library-new" class="btn-primary">＋ 开始翻译</button></header>
+  <div class="library-toolbar">
+    <label class="search-box"><span>⌕</span><input id="history-search" type="search" placeholder="搜索记录名称或备注" aria-label="搜索记录名称或备注"></label>
+    <div class="library-filters" role="group" aria-label="筛选记录">
+      <button type="button" class="chip" data-filter="all" aria-pressed="true">全部</button>
+      <button type="button" class="chip" data-filter="favorite" aria-pressed="false">★ 收藏</button>
+      <button type="button" class="chip" data-filter="review" aria-pressed="false">待核查</button>
+      <button type="button" class="chip" data-filter="trash" aria-pressed="false">废纸篓</button>
+    </div>
+    <span id="history-summary"></span>
+  </div>
     <section class="history" aria-labelledby="history-heading">
-      <h2 id="history-heading">以前的课</h2>
+      <h2 id="history-heading">历史记录</h2>
       <ul id="history" class="history-list"></ul>
-      <p id="history-empty" class="history-empty">还没有记录。每堂课都会自动保存在这里。</p>
+      <p id="history-empty" class="history-empty">还没有记录。每次翻译的字幕都会保存在这里。</p>
+      <button id="history-more" type="button" class="btn-ghost" hidden>加载更多记录</button>
     </section>
 </section>
 <section id="settings-view" class="workspace-view" hidden aria-labelledby="settings-heading">
-  <header class="workspace-header"><div><p class="eyebrow">为你的课堂做好准备</p><h1 id="settings-heading">设置</h1><p class="workspace-description">管理本机模型、阅读习惯和课堂文件。</p></div><span class="settings-local">本机离线</span></header>
-  <section class="settings-card"><div class="section-heading"><h2>识别与翻译</h2><span>文件状态</span></div><div id="model-list" class="model-list"><p>正在读取本机模型…</p></div><label class="setting-row"><span><strong>默认识别模型</strong><small>下次开始新课时生效；不会切换正在进行的课堂。</small></span><select id="settings-model"><option value="small">快速 · Small</option><option value="turbo">Whisper Turbo</option></select></label><p class="settings-note">模型文件存在不代表已经加载或通过准确度验证。此开发版使用本机已准备的模型，下载与安装管理在打包阶段完善。</p></section>
-  <section class="settings-card"><h2>字幕阅读</h2><label class="setting-row"><span><strong>默认只看中文</strong><small>也可以在字幕页随时切换。</small></span><input id="settings-zh-only" type="checkbox" role="switch"></label><div class="setting-row"><span><strong>字号与显示</strong><small>中英文字号在字幕页分别调整，自动记住上次选择。</small></span><span>跟随系统深浅色</span></div></section>
-  <section class="settings-card"><h2>课程与存储</h2><div class="setting-row"><span><strong>课堂文件</strong><small id="storage-summary">正在读取…</small></span><button class="btn-ghost" data-folder="courses">在访达打开</button></div><div class="setting-row"><span><strong>模型文件</strong><small>独立于课程保存；不会随删课而删除。</small></span><button class="btn-ghost" data-folder="models">打开目录</button></div><div class="setting-row"><span><strong>课程术语</strong><small>编辑术语 CSV，下次新课生效。</small></span><button class="btn-ghost" data-folder="terms">打开术语目录</button></div><p class="settings-note">每堂课结束后选择是否保留录音。模型与课堂内容均在本机处理，此版本未接入云端 API。</p></section>
-  <section class="settings-card"><h2>关于听课</h2><div class="setting-row"><span><strong>开发预览版 <span id="about-version">0.6.0</span></strong><small id="engine-ownership">正在连接本地引擎…</small></span><button class="btn-ghost" data-folder="logs">查看诊断目录</button></div><p id="settings-message" class="settings-note" role="status"></p></section>
+  <header class="workspace-header"><div><p class="eyebrow">按你的习惯使用</p><h1 id="settings-heading">设置</h1><p class="workspace-description">管理本机模型、阅读习惯和记录文件。</p></div><span class="settings-local">本机离线</span></header>
+  <section class="settings-card"><div class="section-heading"><h2>识别与翻译</h2><span>模型偏好</span></div><label class="setting-row"><span><strong>默认识别模型</strong><small>下次开始翻译时生效；不会切换正在进行的翻译。</small></span><select id="settings-model"><option value="small">标准 · Small</option><option value="turbo">更准 · Turbo</option></select></label><div class="setting-row engine-panel"><span><strong>本地模型</strong><small>开始翻译时会自动加载所需模型，也可以提前启动；启动模型不会开始录音。</small></span><div class="model-controls"><button id="models-start" class="engine-start" type="button">一键启动</button><button id="models-stop" class="engine-stop" type="button" title="停止全部模型" aria-label="停止全部模型">全部停止</button></div></div><div id="model-list" class="model-list"><p class="engine-placeholder">正在读取状态…</p></div><p id="model-control-message" role="status"></p><p id="model-settings-note" class="settings-note">两个识别模型可以同时加载，翻译时只使用所选的一个；翻译和收尾期间不能启停。此开发版使用本机已准备的模型。</p></section>
+  <section class="settings-card"><h2>字幕阅读</h2><label class="setting-row"><span><strong>默认只看译文</strong><small>也可以在字幕页随时切换。</small></span><input id="settings-zh-only" type="checkbox" role="switch"></label><div class="setting-row"><span><strong>字号与显示</strong><small>原文与译文字号在字幕页分别调整，自动记住上次选择。</small></span><span>跟随系统深浅色</span></div></section>
+  <section class="settings-card"><h2>记录与存储</h2><div class="setting-row"><span><strong>记录文件</strong><small id="storage-summary">正在读取…</small></span><button class="btn-ghost" data-folder="courses">在访达打开</button></div><div class="setting-row"><span><strong>模型文件</strong><small>独立于记录保存；不会随删除记录而删除。</small></span><button class="btn-ghost" data-folder="models">打开目录</button></div><div class="setting-row"><span><strong>术语表</strong><small>编辑 <code>outputs/课程术语.csv</code>（source 或 english、russian 列写原词，chinese 列写译法），下次开始翻译时生效。</small></span><button class="btn-ghost" data-folder="terms">打开术语目录</button></div><p class="settings-note">每次翻译结束后选择是否保留录音。模型与记录内容均在本机处理，此版本未接入云端 API。</p></section>
+  <section class="settings-card about-brand"><div class="about-heading"><span class="logo" aria-hidden="true">SP</span><div><h2>关于 Same Page</h2><p class="about-slogan">每一句，都跟得上。</p></div></div>
+    <p class="settings-note">本地 AI 驱动的实时双语字幕与翻译工具。支持英语→中文、俄语→中文和英俄中混合→中文；混合模式仍需按实际音频核对效果。</p>
+    <details class="about-vision"><summary>产品介绍与支持范围 <span>三种模式</span></summary>
+      <p><strong>本地 AI 驱动的英俄中三语实时传译工具。</strong></p>
+      <p>Same Page 用本地 AI，将你正在听的英语、俄语或中文转为原文字幕与对应译文。无论声音来自麦克风、电脑播放，还是已有录音，都可以边听边看、随时对照，让理解跟上内容的节奏。</p>
+      <p>借助 AI 对语境的理解，更准确地还原表达。识别与翻译在你的电脑上完成，无需将录音上传至云端，不依赖网络连接，断网也能继续。</p>
+      <p>结束后，继续阅读双语记录，或导出文字与字幕；录音是否保留，由你决定。</p>
+      <p class="vision-boundary">本版提供英→中、俄→中、英俄中混合→中；中文片段直接保留。混合切换及同句夹杂可能误识别，请核对原文；暂不提供反向翻译或语音播报。</p>
+    </details><div class="setting-row"><span><strong>开发预览版 <span id="about-version">0.10.2</span></strong><small id="engine-ownership">正在连接本地引擎…</small></span><button class="btn-ghost" data-folder="logs">查看诊断目录</button></div><p id="settings-message" class="settings-note" role="status"></p></section>
 </section>
-<!-- 上课页：字幕占满屏幕，其余都让路 -->
-<section id="live-view" class="view" hidden aria-label="课堂字幕">
+<!-- 字幕页：字幕占满屏幕，其余都让路 -->
+<section id="live-view" class="view" hidden aria-label="原文与译文">
   <header class="bar">
     <div class="bar-left">
       <button id="back" type="button" class="tool back" hidden aria-label="返回开始页">‹ 返回</button>
@@ -109,36 +131,61 @@
       <span id="live-level" class="level" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
     </div>
     <div class="bar-right">
-      <button id="zh-only" type="button" class="tool" aria-pressed="false" title="只显示中文">只看中文</button>
-      <span class="size-group" role="group" aria-label="中文字号">
-        <span class="size-label" aria-hidden="true">中</span>
-        <button id="zh-down" type="button" class="tool sz" aria-label="中文缩小">−</button>
-        <span id="zh-val" class="size-val" aria-live="polite"></span>
-        <button id="zh-up" type="button" class="tool sz" aria-label="中文放大">+</button>
-      </span>
-      <span class="size-group" role="group" aria-label="英文字号">
-        <span class="size-label" aria-hidden="true">英</span>
-        <button id="en-down" type="button" class="tool sz" aria-label="英文缩小">−</button>
-        <span id="en-val" class="size-val" aria-live="polite"></span>
-        <button id="en-up" type="button" class="tool sz" aria-label="英文放大">+</button>
-      </span>
+      <label class="live-search" id="live-search-box" hidden><span aria-hidden="true">⌕</span><input id="live-search" type="search" placeholder="在字幕中查找" aria-label="在字幕中查找"><span id="live-search-count" class="search-count" aria-live="polite"></span><button id="live-search-prev" type="button" class="search-step" aria-label="上一处匹配" disabled>↑</button><button id="live-search-next" type="button" class="search-step" aria-label="下一处匹配" disabled>↓</button></label>
       <div class="pop-wrap">
-        <button id="info-btn" type="button" class="tool" aria-expanded="false" aria-controls="info" title="运行详情">详情</button>
+        <button id="info-btn" type="button" class="tool lag-pill" aria-expanded="false" aria-controls="info" title="字幕延迟与运行详情">详情</button>
         <div id="info" class="pop" hidden>
           <dl>
+            <dt>识别当前执行 / 上次</dt><dd id="i-asr-execution">—</dd>
             <dt>识别落后</dt><dd id="i-lag">—</dd>
             <dt>待翻译</dt><dd id="i-queue">—</dd>
             <dt>排队最久（不含执行）</dt><dd id="i-wait">—</dd>
             <dt>当前执行已用</dt><dd id="i-execution">—</dd>
-            <dt>中文未跟上 / 最久</dt><dd id="i-chinese">—</dd>
+            <dt>译文未跟上 / 最久</dt><dd id="i-chinese">—</dd>
             <dt>未定稿最久</dt><dd id="i-finalization">—</dd>
             <dt>内存（估算）</dt><dd id="i-mem">—</dd>
             <dt>识别模型</dt><dd id="i-model">—</dd>
             <dt>声音来源</dt><dd id="i-source">—</dd>
             <dt>句子</dt><dd id="i-count">—</dd>
+            <dt>未识别区间</dt><dd id="i-asr-gaps">无</dd>
           </dl>
-          <p class="pop-legend">字幕边听边出，几句合成一段。<br>译文被修正时会慢慢淡入新内容，不会闪。<br>鼠标指向一句，中英对应会一起高亮。</p>
-          <div class="pop-links"><a id="dl-txt-live">下载双语文本</a><a id="dl-srt-live">下载字幕 SRT</a></div>
+          <div id="recognition-details" class="pop-review" hidden><p id="recognition-summary"></p><p id="recognition-ranges"></p><p id="integrity-note"></p></div>
+          <p class="pop-legend">字幕边听边出，几句合成一段。<br>译文被修正时会慢慢淡入新内容，不会闪。<br>鼠标指向一句，原文与译文会一起高亮。</p>
+        </div>
+      </div>
+      <div class="pop-wrap">
+        <button id="display-btn" type="button" class="tool" aria-expanded="false" aria-controls="display" title="显示与字号">显示</button>
+        <div id="display" class="pop" hidden>
+          <div class="pop-row">
+            <span class="pop-row-label">原文</span>
+            <span class="size-group" role="group" aria-label="原文字号">
+              <button id="en-down" type="button" class="tool sz" aria-label="原文缩小">−</button>
+              <span id="en-val" class="size-val" aria-live="polite"></span>
+              <button id="en-up" type="button" class="tool sz" aria-label="原文放大">+</button>
+            </span>
+          </div>
+          <div class="pop-row">
+            <span class="pop-row-label">译文</span>
+            <span class="size-group" role="group" aria-label="译文字号">
+              <button id="zh-down" type="button" class="tool sz" aria-label="译文缩小">−</button>
+              <span id="zh-val" class="size-val" aria-live="polite"></span>
+              <button id="zh-up" type="button" class="tool sz" aria-label="译文放大">+</button>
+            </span>
+          </div>
+          <div class="pop-row">
+            <span class="pop-row-label">只看译文</span>
+            <button id="zh-only" type="button" class="tool" aria-pressed="false">关</button>
+          </div>
+          <p class="pop-legend">字号自动记住。切换只影响阅读，不改动字幕内容。</p>
+        </div>
+      </div>
+      <div class="pop-wrap">
+        <button id="export-btn" type="button" class="tool" aria-expanded="false" aria-controls="export" title="复制或下载字幕">导出</button>
+        <div id="export" class="pop pop-menu" hidden>
+          <button id="copy-text" type="button">复制全部字幕</button>
+          <a id="dl-txt">下载双语文本（TXT）</a>
+          <a id="dl-srt">下载字幕（SRT）</a>
+          <a id="dl-md">下载 Markdown</a>
         </div>
       </div>
       <button id="stop" type="button" class="btn-stop">结束</button>
@@ -146,6 +193,21 @@
   </header>
 
   <div id="banner" class="banner" role="status" hidden></div>
+
+  <div id="record-tools" class="record-tools" hidden>
+    <div class="record-tools-left">
+      <label class="record-field" for="record-title"><span class="record-field-label">名称</span><input id="record-title" type="text" maxlength="100" placeholder="给这条记录起个名字" aria-label="记录名称"></label>
+      <span id="record-title-state" class="field-state" aria-live="polite"></span>
+      <button id="record-play" type="button" class="tool" aria-label="播放录音">▶ 播放录音</button>
+      <input id="record-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="录音进度">
+      <span id="record-time" class="record-time">00:00</span>
+    </div>
+    <div class="record-tools-right">
+      <label class="record-field" for="record-note"><span class="record-field-label">备注</span><input id="record-note" type="text" maxlength="200" placeholder="一句话备注" aria-label="记录备注"></label>
+      <span id="record-note-state" class="field-state" aria-live="polite"></span>
+      <button id="record-fav" type="button" class="tool" aria-pressed="false">★ 收藏</button>
+    </div>
+  </div>
 
   <main id="scroller" class="scroller" tabindex="0" aria-label="字幕，最新的在最下面">
     <div id="live-empty" class="live-empty"><div class="pulse" aria-hidden="true"><i></i><i></i><i></i></div><p id="live-empty-text">正在准备…</p></div>
@@ -158,27 +220,31 @@
   <footer id="done" class="done" hidden>
     <div class="done-text"><strong id="done-title">已保存</strong><span id="done-sub"></span></div>
     <div class="done-actions">
-      <a id="dl-txt" class="btn-ghost">下载双语文本</a>
-      <a id="dl-srt" class="btn-ghost">下载字幕 SRT</a>
       <button id="recording-choice" type="button" class="btn-ghost" hidden>选择是否保留录音</button>
-      <button id="new-class" type="button" class="btn-primary">开始新的一堂课</button>
+      <button id="new-class" type="button" class="btn-primary">开始新的翻译</button>
     </div>
   </footer>
 </section>
 
+<dialog id="delete-dialog" aria-labelledby="delete-heading" aria-describedby="delete-description">
+  <div class="delete-symbol" aria-hidden="true">×</div>
+  <h2 id="delete-heading">删除记录？</h2>
+  <p id="delete-course-name" class="delete-course-name"></p>
+  <p id="delete-description"></p>
+  <div class="recording-actions"><button id="delete-cancel" type="button" class="btn-ghost">取消</button><button id="delete-confirm" type="button" class="btn-danger">删除记录</button></div>
+</dialog>
 <dialog id="recording-dialog" aria-labelledby="recording-heading">
-  <h2 id="recording-heading">保存这堂课的录音吗？</h2>
+  <h2 id="recording-heading">保留本次录音吗？</h2>
   <p>字幕和历史记录都会保留。保留录音可用于回听、核对和补处理。</p>
-  <p>选择“不保存录音”会永久删除本课的音频文件，无法撤销。</p>
+  <p>选择“不保留录音”会永久删除本次的音频文件，无法撤销。</p>
   <p id="recording-error" role="status"></p>
   <div class="recording-actions">
-    <button id="recording-later" type="button" class="btn-ghost">稍后决定</button>
-    <button id="recording-discard" type="button" class="btn-ghost">不保存录音</button>
-    <button id="recording-keep" type="button" class="btn-primary">保存录音</button>
+    <button id="recording-discard" type="button" class="btn-ghost">不保留录音</button>
+    <button id="recording-keep" type="button" class="btn-primary">保留录音</button>
   </div>
 </dialog>
-<dialog id="desktop-exit" aria-labelledby="desktop-exit-heading"><h2 id="desktop-exit-heading">退出听课？</h2><p id="desktop-exit-message"></p><p id="desktop-exit-error" role="status"></p><div class="recording-actions"><button id="exit-cancel" class="btn-ghost">继续使用</button><button id="exit-confirm" class="btn-primary">退出应用</button></div></dialog>
-<script src="/static/app.js"></script>
-<script src="/static/desktop.js"></script>
+<dialog id="desktop-exit" aria-labelledby="desktop-exit-heading"><h2 id="desktop-exit-heading">退出 Same Page？</h2><p id="desktop-exit-message"></p><p id="desktop-exit-error" role="status"></p><div class="recording-actions"><button id="exit-cancel" class="btn-ghost">继续使用</button><button id="exit-confirm" class="btn-primary">退出应用</button></div></dialog>
+<script src="/static/app.js?v=0.10.2"></script>
+<script src="/static/desktop.js?v=0.10.2"></script>
 </body>
 </html>

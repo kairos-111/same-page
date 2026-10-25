@@ -3,6 +3,8 @@ from dataclasses import dataclass
 import re
 import math
 from .asr_quality import words_issue
+from .chinese import simplified, simplified_segment
+from .languages import join_asr_words,source_language,text_languages,language_units
 
 @dataclass
 class Word:
@@ -11,15 +13,15 @@ class Word:
     text: str
 
 class SegmentComposer:
-    def __init__(self):
+    def __init__(self, language_mode='en'):
+        self.language_mode=language_mode
         self.index = 1
         self.words = []
         self.previous = {}
 
     @staticmethod
     def text(words):
-        text=re.sub(r"\s+", " ", " ".join(w.text.strip() for w in words)).strip()
-        return re.sub(r"\s+([,.;:!?%])",r"\1",text)
+        return join_asr_words(words)
 
     def emit(self, words, final):
         if not words:
@@ -29,11 +31,13 @@ class SegmentComposer:
             return None
         key = f"s{self.index:06}"
         old = self.previous.get(key)
-        if old and old["source"] == text and old["final"] == final:
+        if old and old["source"] == simplified(text) and old["final"] == final:
             return None
         event = dict(type="segment", id=key, source=text, start=words[0].start,
                      end=words[-1].end, final=final, revision=(old["revision"]+1 if old else 1),
-                     language="en", translation="", translated_revision=None)
+                     language=source_language(text,self.language_mode),languages=text_languages(text),
+                     language_mode=self.language_mode,translation="", translated_revision=None)
+        event = simplified_segment(event)
         self.previous[key] = event
         if len(self.previous) > 4:
             self.previous.pop(next(iter(self.previous)))
@@ -51,7 +55,7 @@ class SegmentComposer:
             start = min(start, self.words[0].start)
         event = dict(type='segment', id=key, source='[识别异常：此区间未确认，请定位原始录音补处理]',
             start=start, end=end, final=False, revision=old['revision']+1 if old else 1,
-            language='en', translation='', translated_revision=None,
+            language=self.language_mode if self.language_mode!='mixed' else 'und', language_mode=self.language_mode,translation='', translated_revision=None,
             asr_status='unresolved', asr_reason=reason)
         self.words=[]
         self.previous[key]=event
@@ -73,9 +77,9 @@ class SegmentComposer:
         for word in committed:
             self.words.append(word)
             duration = word.end-self.words[0].start
-            clause = duration >= 4 and re.search(r"[,;:][\"')]*$", word.text.strip())
-            enough = len(self.words) >= 18 and duration >= 12
-            if re.search(r"[.!?][\"')]*$", word.text.strip()) or clause or enough:
+            clause = duration >= 4 and re.search(r"[,;:，；：][\"')”’]*$", word.text.strip())
+            enough = len(language_units(self.text(self.words))) >= 18 and duration >= 12
+            if re.search(r"[.!?。！？][\"')”’]*$", word.text.strip()) or clause or enough:
                 event = self.emit(self.words, True)
                 if event:
                     events.append(event)

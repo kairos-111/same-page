@@ -10,15 +10,18 @@ vm.runInContext(paint, context);
 function typer() {
   return {target: '旧译文', shown: '旧译文', finish() { this.shown = this.target; }};
 }
+// Current rule: an unresolved range withdraws the old preview and puts no system
+// text, card or blank line in the body; the gap is listed under Details instead.
 const entry = {
   data: {asr_status: 'unresolved', source: '[识别异常：请定位录音补处理]'},
   shownZh: '旧译文', en: typer(), zh: typer(),
+  stateLabel: {textContent: '（等待中文）'},
   zhEl: {classList: {add() {}}, title: ''}, btn: {hidden: false}
 };
 context.paint(entry);
-assert.equal(entry.zh.shown, entry.data.source);
-assert.equal(entry.en.shown, entry.data.source);
-assert.equal(entry.shownZh, entry.data.source);
-assert.equal(entry.btn.hidden, true);
-assert.match(entry.zhEl.title, /未确认/);
+assert.equal(entry.en.shown, '', 'the old source preview is withdrawn');
+assert.equal(entry.zh.shown, '', 'the old translation preview is withdrawn');
+assert.equal(entry.shownZh, '', 'no translation is kept for the withdrawn range');
+assert.equal(entry.stateLabel.textContent, '', 'no inline status text is shown');
+assert.equal(entry.btn.hidden, true, 'no retry button for an unresolved range');
 console.log('ASR unresolved UI withdrawal: passed');

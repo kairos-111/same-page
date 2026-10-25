@@ -1,9 +1,9 @@
 """WhisperLiveKit LocalAgreement adapter; all calls run on one dedicated thread."""
 from .asr_recovery import RecoveryGuard
-from .asr_quality import GuardedDecoder, RejectedRecognition
+from .asr_quality import GuardedDecoder, RejectedRecognition, RecognitionPending
 
 class WhisperAdapter:
-    def __init__(self, model_path, hint=''):
+    def __init__(self, model_path, hint='', language_mode='en'):
         import mlx.core as mx
         import numpy as np
         import torch
@@ -13,14 +13,21 @@ class WhisperAdapter:
         torch.set_num_threads(2)
         if not mx.metal.is_available():
             raise RuntimeError('MLX 未检测到 Apple GPU')
-        self.asr = MLXWhisper(lan='en',model_dir=str(model_path))
+        from .languages import MODES
+        from .language_detection import SpeechLanguageRouter,mlx_language_detector
+        if language_mode not in MODES:raise ValueError('识别模式无效')
+        self.language_mode=language_mode
+        language=language_mode if language_mode!='mixed' else None
+        self.language_router=SpeechLanguageRouter(mlx_language_detector(str(model_path.resolve()))) if language_mode=='mixed' else None
+        self.asr = MLXWhisper(lan=language or 'auto',model_dir=str(model_path))
         self.asr.tokenizer = None
         self.asr.confidence_validation = False
         self.asr.buffer_trimming = 'segment'
         self.asr.buffer_trimming_sec = 10
-        prompt='An English lecture.'
+        prompt='An English lecture.' if language_mode=='en' else 'Русская речь.' if language_mode=='ru' else ''
         if hint:prompt+=' Topics include '+hint.rstrip(', .')+'.'
-        self.decoder = GuardedDecoder(self.asr.model, self.asr.model_size_or_path, prompt)
+        self.decoder = GuardedDecoder(self.asr.model, self.asr.model_size_or_path, prompt, language, self.language_router)
+        self.decoder.wait_for_context = language_mode=='mixed'
         self.asr.transcribe = self.decoder
         self.online = OnlineASRProcessor(self.asr)
         self.recovery = RecoveryGuard(self.online)
@@ -44,7 +51,7 @@ class WhisperAdapter:
         self.np = np
         self.torch = torch
         # Compile the common MLX path before starting the classroom clock.
-        self.asr.model(np.zeros(16000,dtype=np.float32),language='en',temperature=0.0,
+        self.asr.model(np.zeros(16000,dtype=np.float32),language=language,task='transcribe',temperature=0.0,
             word_timestamps=True,path_or_hf_repo=self.asr.model_size_or_path)
 
     def set_backlog(self, seconds):
@@ -79,6 +86,8 @@ class WhisperAdapter:
             self.preroll = (self.preroll+data)[-24000:]
             return [],[],False
         if not self.active:
+            router=getattr(self,'language_router',None)
+            if router:router.reset()
             data = self.preroll+data
             self.run_start = start_seconds-len(self.preroll)/32000
             self.run_frontier = self.recovery.frontier
@@ -97,7 +106,13 @@ class WhisperAdapter:
         else:self.silence+=len(audio)/16000
         try:
             self.decoder.offset = self.online.buffer_time_offset
+            self.decoder.frontier = getattr(self.recovery,'frontier',self.decoder.offset)
+            self.decoder.finalizing = self.silence>=1
+            router=getattr(self,'language_router',None)
+            if router:router.frontier=self.recovery.frontier
             committed,_ = self.recovery.process_iter()
+        except RecognitionPending:
+            return self._result([], [], False, waiting=True)
         except RejectedRecognition:
             return self._reject(end_seconds)
         if self.silence>=1:
@@ -129,6 +144,8 @@ class WhisperAdapter:
             return [],[],True
         try:
             self.decoder.offset = self.online.buffer_time_offset
+            self.decoder.frontier = getattr(self.recovery,'frontier',self.decoder.offset)
+            self.decoder.finalizing = True
             committed,_=self.recovery.process_iter()
         except RejectedRecognition:
             return self._reject(self.end_seconds)
@@ -137,13 +154,14 @@ class WhisperAdapter:
         self._close_run(self.end_seconds)
         return self._result(committed, [], True)
 
-    def _result(self, committed, partial, flush, rejected=False):
+    def _result(self, committed, partial, flush, rejected=False, waiting=False):
         events, self.decoder.events = self.decoder.events, []
-        return committed, partial, flush, dict(events=events, rejected=rejected)
+        return committed, partial, flush, dict(events=events, rejected=rejected, waiting=waiting)
 
     def _reject(self, end_seconds):
         # Quality rejection has its own bounded retry; never launch coverage retries too.
         self.online.init(offset=end_seconds)
+        self.decoder.pending_end=None
         self.active=False
         self.silence=0
         self.preroll=b''

@@ -24,3 +24,13 @@ assert.equal(entry.zh.text, '最新中文');
 assert.equal(entry.stateLabel.textContent, '');
 assert.equal(entry.btn.hidden, true);
 console.log('translation UI version/failure checks passed');
+
+// Defensive paint clears any stale preview without rendering diagnostic text.
+entry.en = {target:'old source',finish(){this.text=this.target;}};
+entry.zh = {target:'旧译文',finish(){this.text=this.target;}};
+entry.data = {id:'gap',source:'[识别异常：此区间未确认，请定位原始录音补处理]',asr_status:'unresolved',start:20,end:30};
+context.paint(entry);
+assert.equal(entry.en.text,'');
+assert.equal(entry.zh.text,'');
+assert.equal(entry.btn.hidden,true);
+console.log('rejected previews are withdrawn without diagnostic text in subtitles');

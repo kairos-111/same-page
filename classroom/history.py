@@ -11,11 +11,11 @@ BUSY = {'loading', 'running', 'draining'}
 
 def session_path(root, session_id):
     if not SESSION_ID.fullmatch(session_id):
-        raise FileNotFoundError('课堂记录不存在')
+        raise FileNotFoundError('记录不存在')
     root = Path(root).resolve()
     path = root / session_id
     if path.is_symlink() or not path.is_dir() or path.resolve().parent != root:
-        raise FileNotFoundError('课堂记录不存在')
+        raise FileNotFoundError('记录不存在')
     return path
 
 
@@ -30,13 +30,13 @@ def ensure_ended(session_id, active):
     if active and active.id == session_id:
         task = getattr(active, 'orchestrator', None)
         if active.state in BUSY or (task is not None and not task.done()):
-            raise ValueError('这堂课仍在处理或保存，请结束并等待保存完成')
+            raise ValueError('本次记录仍在处理或保存，请结束并等待保存完成')
 
 
 def reveal_recording(path):
     recordings = audio_files(path)
     if not recordings:
-        raise FileNotFoundError('这堂课没有保留录音')
+        raise FileNotFoundError('本次没有保留录音')
     target = next((p for p in recordings if p.suffix == '.wav'), recordings[0])
     subprocess.run(['/usr/bin/open', '-R', str(target)], check=True, timeout=5)
 

@@ -1,6 +1,6 @@
 {
   "identifier": "desktop",
   "windows": ["main"],
-  "remote": { "urls": ["http://127.0.0.1:8767/*"] },
+  "remote": { "urls": ["http://127.0.0.1:8767/*", "http://127.0.0.1:8877/*"] },
   "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "allow-desktop-info", "allow-finish-exit"]
 }

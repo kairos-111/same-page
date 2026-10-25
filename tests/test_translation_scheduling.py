@@ -61,6 +61,22 @@ class SchedulingTests(unittest.IsolatedAsyncioTestCase):
         import json
         return [json.loads(x) for x in (self.s.store.path/'events.jsonl').read_text().splitlines()]
 
+    async def test_asr_timing_resets_after_failure_and_records_outcome(self):
+        async def thread(fn,*args):
+            self.assertGreater(self.s.status()['asr_execution_age'],0)
+            return fn(*args)
+        self.s.runtime=SimpleNamespace(thread=thread)
+        def fail(*args):raise RuntimeError('synthetic')
+        with self.assertRaises(RuntimeError):
+            await self.s.process_asr(fail,b'audio',3.0)
+        self.assertIsNone(self.s.asr_started)
+        event=self.logs()[-1]
+        self.assertEqual(event['type'],'asr_attempt')
+        self.assertEqual(event['outcome'],'error')
+        self.assertEqual(event['audio_end'],3.0)
+        self.assertEqual(await self.s.process_asr(lambda: 'finished'),'finished')
+        self.assertTrue(self.logs()[-1]['flush'])
+
     async def test_slow_stale_request_latest_final_drains_and_is_traceable(self):
         self.s.on_segment(segment(1,'The dose is 35 mg'))
         await self.start()

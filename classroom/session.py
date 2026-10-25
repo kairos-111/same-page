@@ -8,14 +8,18 @@ import time
 import uuid
 import psutil
 import httpx
-from .paths import OUTPUTS,SESSIONS,LLAMA_URL
+from .paths import OUTPUTS,SESSIONS,LLAMA_URL,CAPTURE
 from .store import SessionStore,check_integrity
 from .subtitles import SegmentComposer
+from .chinese import simplified_segment
 from .translation import Glossary,LocalTranslator,RevisionQueue,apply_translation,preview_due,validate_translation,critical_signature
 from .process import terminate_and_drain
+from .languages import MODES,chinese_passthrough,source_language,text_languages
 
 class ClassSession:
-    def __init__(self,runtime,source,model,title,upload=None,realtime=True):
+    def __init__(self,runtime,source,model,title,upload=None,realtime=True,language_mode='en'):
+        if language_mode not in MODES:raise ValueError('识别模式无效')
+        self.language_mode=language_mode
         self.runtime=runtime
         self.id=datetime.now().strftime('%Y%m%d-%H%M%S-')+uuid.uuid4().hex[:8]
         self.source,self.model,self.title=source,model,title
@@ -26,13 +30,13 @@ class ClassSession:
         self.state='loading'
         self.error=''
         self.store=SessionStore(SESSIONS/self.id,dict(id=self.id,title=title,source=source,model=model,
-            started_at=datetime.now().astimezone().isoformat(),state=self.state,language='en',target='zh',
+            started_at=datetime.now().astimezone().isoformat(),state=self.state,language='mul' if language_mode=='mixed' else language_mode,language_mode=language_mode,target='zh',
             recording_decision='pending',recording_retained=True,
             upload_id=upload.name if upload is not None else None))
         self.queue=RevisionQueue()
         self.segments=OrderedDict()
         self.context=deque(maxlen=2)
-        self.composer=SegmentComposer()
+        self.composer=SegmentComposer(language_mode)
         self.clients=set()
         self.input_done=False
         self.processed=0
@@ -57,6 +61,11 @@ class ClassSession:
         self.integrity=None
         self.asr_flushed=False
         self.saved=False
+        self.asr_started=None
+        self.asr_last_seconds=0
+        # Imported files are decoded as fast as possible; there is no live speaker to keep up with.
+        self.fast_import=source=='file' and not realtime
+        self.recognize_limit=None
 
     def event(self,obj,persist=True):
         obj={**obj,'session_id':self.id,'session_elapsed':time.monotonic()-self.clock,'wall_time':time.time()}
@@ -86,6 +95,8 @@ class ClassSession:
             recording_retained=self.store.metadata.get("recording_retained",True),
             audio_seconds=self.store.audio.seconds,asr_lag=max(0,self.store.audio.seconds-self.processed),
             translation_queue=len(self.queue.pending),translation_wait=max(0,now-oldest),
+            asr_execution_age=max(0,now-self.asr_started) if self.asr_started is not None else 0,
+            asr_last_seconds=self.asr_last_seconds,
             translation_busy=self.inflight is not None,
             translation_execution_age=max(0,now-self.inflight_started) if self.inflight_started is not None else 0,
             translation_inflight_revision=self.inflight_item['revision'] if self.inflight_item else None,
@@ -94,14 +105,17 @@ class ClassSession:
             chinese_lag=max((now-x['unmatched_since'] for x in behind),default=0),
             finalization_wait=max((now-x['first_seen_at'] for x in self.segments.values() if not x['final'] and x.get('asr_status') != 'unresolved'),default=0),
             level=round(self.level,4),input_idle=round(time.monotonic()-self.last_input,1),
-            memory_bytes=rss,source=self.source,model=self.model,
+            memory_bytes=rss,source=self.source,model=self.model,language_mode=self.language_mode,target='zh',
             asr_unresolved=self.asr_unresolved,
+            processed_seconds=self.processed,input_done=self.input_done,fast_import=self.fast_import,
             final_count=sum(s['final'] for s in self.segments.values()))
 
     async def run(self):
         try:
             await self.runtime.ensure_translation()
-            self.asr=await self.runtime.load_asr(self.model,self.glossary.asr_hint())
+            args=(self.model,self.glossary.asr_hint(self.language_mode))
+            if self.language_mode!='en':args+= (self.language_mode,)
+            self.asr=await self.runtime.load_asr(*args)
             self.state='running'
             self.clock=time.monotonic()
             self.store.metadata['audio_started_at']=time.time()
@@ -166,6 +180,8 @@ class ClassSession:
         if self.state not in ('running','draining'):return
         self.state='draining'
         self.input_done=True
+        if self.fast_import and self.recognize_limit is None:
+            self.recognize_limit=int(self.processed*16000)*2
         if self.source_process and self.source_process.returncode is None:self.source_process.terminate()
         if not self.source_task.done():self.source_task.cancel()
         try:await asyncio.wait_for(asyncio.shield(self.orchestrator),60)
@@ -188,7 +204,7 @@ class ClassSession:
                 import imageio_ffmpeg
                 cmd=[imageio_ffmpeg.get_ffmpeg_exe(),'-nostdin','-v','error','-i',str(self.upload),'-f','s16le','-ac','1','-ar','16000','pipe:1']
             else:
-                binary=OUTPUTS/'native'/'ClassroomAudio.app'/'Contents'/'MacOS'/'ClassroomAudio'
+                binary=CAPTURE
                 if not binary.exists():raise RuntimeError('音频采集程序尚未构建')
                 cmd=[str(binary),self.source]
             self.source_process=await asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
@@ -226,8 +242,8 @@ class ClassSession:
 
     async def recognize(self):
         cursor=0
-        while not self.input_done or cursor*2<self.store.audio.bytes:
-            available=self.store.audio.bytes//2-cursor
+        while not self.input_done or cursor*2<self.recognition_end():
+            available=self.recognition_end()//2-cursor
             if available<16000 and not self.input_done:
                 await asyncio.sleep(.1);continue
             if available<=0:break
@@ -236,23 +252,48 @@ class ClassSession:
             if not data:raise RuntimeError("音频日志读取未前进；原声保留，未处理区间待核查")
             cursor+=len(data)//2
             if hasattr(self.asr,'set_backlog'):
-                self.asr.set_backlog(max(0,self.store.audio.seconds-cursor/16000))
-            result=await self.runtime.thread(self.asr.process,data,cursor/16000)
+                # A fast import is always far ahead of recognition; that is not live lag,
+                # so recovery decodes stay enabled.
+                self.asr.set_backlog(0 if self.fast_import else max(0,self.store.audio.seconds-cursor/16000))
+            result=await self.process_asr(self.asr.process,data,cursor/16000)
             self.record_asr_events()
             self.processed=cursor/16000
             self.accept_asr_result(result)
-        result=await self.runtime.thread(self.asr.finish)
+        result=await self.process_asr(self.asr.finish)
         self.record_asr_events()
         self.accept_asr_result(result)
         self.asr_flushed=True
         self.queue.close()
 
+    def recognition_end(self):
+        # Stopping a fast import ends recognition where it stands; the rest of the file
+        # stays in the recording and is reported as unprocessed by the integrity check.
+        end=self.store.audio.bytes
+        return end if self.recognize_limit is None else min(end,self.recognize_limit)
+
+    async def process_asr(self, function, *args):
+        self.asr_started=time.monotonic()
+        outcome='completed'
+        try:return await self.runtime.thread(function,*args)
+        except asyncio.CancelledError:
+            outcome='cancelled_wait' # Thread execution may still be running.
+            raise
+        except Exception:
+            outcome='error'
+            raise
+        finally:
+            self.asr_last_seconds=time.monotonic()-self.asr_started
+            self.event(dict(type='asr_attempt',audio_end=args[1] if len(args)>1 else self.processed,
+                seconds=self.asr_last_seconds,flush=not bool(args),outcome=outcome))
+            self.asr_started=None
+
     def accept_asr_result(self, result):
         # Fourth field is additive; legacy/test adapters may still return three.
         quality = result[3] if len(result)>3 else {}
         for event in quality.get('events', []):self.event(event)
+        if quality.get('waiting'):return
         if quality.get('rejected'):
-            failure = quality['events'][-1]
+            failure = next(e for e in reversed(quality['events']) if e.get('type') == 'asr_quality' and e.get('status') == 'unresolved')
             self.on_segment(self.composer.reject(failure['start'], failure['end'],
                 failure['attempts'][-1]['reason']))
             return
@@ -272,7 +313,12 @@ class ClassSession:
             self.last_segment=event
             self.event(event)
             return
+        event=simplified_segment(event)
+        event['language_mode']=self.language_mode
+        event['language']=source_language(event['source'],self.language_mode)
+        event['languages']=text_languages(event['source'])
         old=self.segments.get(key)
+        passthrough=chinese_passthrough(event['source'])
         reuse=False
         if old and old.get('translation') and event['source'].startswith(old['source']):
             event['translation']=old['translation']
@@ -290,6 +336,10 @@ class ClassSession:
         if old and old.get('translation') and not event.get('translation'):
             event['translation']=old['translation']
             event['translated_revision']=old.get('translated_revision')
+        if passthrough:
+            event.update(translation=event['source'],translated_revision=event['revision'],
+                translation_origin='source_zh',translation_error='',translation_seconds=0)
+            reuse=True
         self.segments[key]=event
         self.last_segment=event
         while len(self.segments)>500:
@@ -299,8 +349,8 @@ class ClassSession:
             else:break
         self.event(event)
         if reuse:
-            self.context.append(event['source'])
-            if self.realtime:self.final_latency.append(max(0,time.monotonic()-self.clock-event['end']))
+            if event['final']:self.context.append(event['source'])
+            if self.realtime and event['final']:self.final_latency.append(max(0,time.monotonic()-self.clock-event['end']))
             self.queue.pending.pop(key,None)
             return
         # Any queued revision is replaced only by the current eligible revision.

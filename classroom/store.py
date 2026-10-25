@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 import wave
+from .languages import MODE_LABELS
+from .chinese import simplified_segment
 
 RATE = 16000
 CHUNK_BYTES = RATE * 2 * 300
@@ -68,11 +70,34 @@ class AudioJournal:
             self.handle = None
 
     def export_wav(self):
-        for p in sorted(self.path.glob("audio_*.pcm")):
-            with p.open("rb") as src, wave.open(str(p.with_suffix(".wav")), "wb") as dest:
-                dest.setparams((1, 2, RATE, 0, "NONE", "not compressed"))
-                while data := src.read(1024 * 1024):
-                    dest.writeframesraw(data)
+        """Merge the PCM spool into one WAV, then drop the spool so audio is kept once.
+
+        The PCM parts are removed only after the WAV is complete and its length
+        matches; an interrupted export leaves the PCM in place for recovery.
+        """
+        parts = sorted(p for p in self.path.glob("audio_*.pcm") if p.is_file())
+        if not parts:
+            return None
+        expected = sum(p.stat().st_size for p in parts) // 2
+        target = self.path / "audio_0000.wav"
+        partial = self.path / "audio_0000.wav.partial"
+        with wave.open(str(partial), "wb") as dest:
+            dest.setparams((1, 2, RATE, 0, "NONE", "not compressed"))
+            for part in parts:
+                with part.open("rb") as src:
+                    while data := src.read(1024 * 1024):
+                        dest.writeframesraw(data[:len(data) // 2 * 2])
+        with wave.open(str(partial), "rb") as check:
+            if check.getnframes() != expected:
+                partial.unlink(missing_ok=True)
+                raise RuntimeError("录音导出长度不一致；原始音频已保留")
+        partial.replace(target)
+        for old in self.path.glob("audio_*.wav"):
+            if old != target and old.is_file() and not old.is_symlink():
+                old.unlink()
+        for part in parts:
+            part.unlink()
+        return target
 
 class SessionStore:
     def __init__(self, directory, metadata):
@@ -103,7 +128,7 @@ class SessionStore:
                     except json.JSONDecodeError:
                         continue
                     if obj.get("type") == "segment":
-                        segments[obj["id"]] = obj
+                        segments[obj["id"]] = simplified_segment(obj)
         return sorted(segments.values(), key=lambda s: (s["start"], s["id"]))
 
     def export(self):
@@ -153,7 +178,8 @@ def export_session(path):
     metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     integrity = metadata.get('integrity')
     note = (integrity.get('warning') or '流程核对完成；不证明逐词完整或识别准确。') if integrity else '此记录尚无结束完整性核对；不能据此证明字幕完整。'
-    text, srt = [note+'\n'], []
+    heading=MODE_LABELS.get(metadata.get('language_mode',metadata.get('language','en')),MODE_LABELS['en'])
+    text, srt = [note+'\n', '识别模式：'+heading+'\n'], []
     if integrity:
         for gap in integrity.get('recognition_gaps', []):
             text.append(f"[待核查识别区间 {srt_time(gap['start'])} — {srt_time(gap['end'])}] {gap['reason']}")
@@ -179,4 +205,49 @@ def export_session(path):
     files = dict(txt=path/f'双语记录{suffix}.txt',srt=path/f'双语字幕{suffix}.srt')
     files['txt'].write_text('\n'.join(text))
     files['srt'].write_text('\n'.join(srt))
+    files['md']=path/f'双语记录{suffix}.md'
+    files['md'].write_text('\n'.join(export_markdown(path,segments,metadata,integrity)))
     return files
+
+
+def export_markdown(path, segments=None, metadata=None, integrity=None):
+    """A readable Markdown rendering of one record: source, translation and notes."""
+    path = Path(path)
+    if segments is None:
+        segments = SessionStore.load_segments(path)
+    if metadata is None:
+        metadata_path = path/'session.json'
+        metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    if integrity is None:
+        integrity = metadata.get('integrity')
+    title = str(metadata.get('title') or '新记录')
+    heading = MODE_LABELS.get(metadata.get('language_mode', metadata.get('language', 'en')), MODE_LABELS['en'])
+    lines = [f'# {title}', '']
+    started = metadata.get('started_at')
+    if started:
+        lines.append(f'- 开始时间：{started}')
+    lines.append(f'- 识别模式：{heading}')
+    if metadata.get('note'):
+        lines += ['', '## 备注', '', str(metadata['note'])]
+    if integrity:
+        gaps = integrity.get('recognition_gaps', [])
+        unmatched = integrity.get('unmatched_translation_ids', [])
+        if gaps or unmatched:
+            lines += ['', '## 待核查', '']
+            for gap in gaps:
+                lines.append(f'- {srt_time(gap["start"])} — {srt_time(gap["end"])}：{gap.get("reason", "")}')
+            if unmatched:
+                lines.append('- 未完成匹配译文：' + ', '.join(unmatched))
+    lines += ['', '## 双语记录', '']
+    for segment in segments:
+        if segment.get('asr_status') == 'unresolved':
+            lines.append(f'> `[{srt_time(segment["start"])} — {srt_time(segment["end"])}]` 识别异常，需回听原声补处理')
+            lines.append('')
+            continue
+        translated = segment.get('translation') or '（待翻译）'
+        lines.append(f'**[{srt_time(segment["start"])} — {srt_time(segment["end"])}]**')
+        lines.append('')
+        lines.append(f'- 原文：{segment.get("source", "")}')
+        lines.append(f'- 译文：{translated}')
+        lines.append('')
+    return lines
