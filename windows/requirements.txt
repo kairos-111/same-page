@@ -1,0 +1,19 @@
+# Windows engine (x86-64, Python 3.12). Versions follow requirements.lock where shared.
+fastapi==0.161.1
+starlette==1.9.0
+uvicorn==0.54.0
+websockets==17.3
+python-multipart==0.0.32
+httpx==0.28.1
+pydantic==2.14.1
+numpy==2.5.4
+psutil==7.2.2
+opencc-python-reimplemented==0.1.7
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+onnxruntime==1.31.0
+av==19.0.2
+tokenizers==0.23.3
+soundcard==0.4.6
+cffi==2.1.1
+msvc-runtime

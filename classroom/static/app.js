@@ -8,6 +8,15 @@ const SOURCE_HINT = {
   system: '会听到电脑上所有正在播放的声音。第一次用时，macOS 可能要求「屏幕与系统音频录制」权限，不会保存任何画面。',
   file: '选一个本机的录音或视频，会尽快处理，不用等完原来的时长。'
 };
+// Windows build: same pages, Windows wording (Ctrl, 文件资源管理器, privacy settings).
+const IS_WINDOWS = /Windows/.test(navigator.userAgent);
+const FILE_MANAGER = IS_WINDOWS ? '文件资源管理器' : '访达';
+if (IS_WINDOWS) {
+  SOURCE_HINT.microphone = '使用电脑当前的默认麦克风。如果没有声音，请在 Windows“设置 → 隐私和安全性 → 麦克风”中允许桌面应用访问麦克风。';
+  SOURCE_HINT.system = '会听到电脑上所有正在播放的声音（默认扬声器或耳机），不需要额外授权。';
+  document.querySelectorAll('.start-kbd').forEach(k => { k.textContent = 'Ctrl ↵'; });
+  document.querySelectorAll('[data-folder="courses"]').forEach(b => { b.textContent = '在文件夹中打开'; });
+}
 const SIZES = [13, 15, 17, 19, 22, 26, 30, 36];
 const MAX_LINES = 500;
 
@@ -1366,7 +1375,7 @@ $('record-play').onclick = () => {
       $('record-time').textContent = clock(created.currentTime);
     });
     created.addEventListener('ended', () => { if (created !== audioPlayer) return; $('record-play').textContent = '▶ 播放录音'; $('record-seek').value = '0'; });
-    created.addEventListener('error', () => { if (created === audioPlayer) flash('这段录音暂时无法播放，可以到访达中打开。', 'error'); });
+    created.addEventListener('error', () => { if (created === audioPlayer) flash('这段录音暂时无法播放，可以到' + FILE_MANAGER + '中打开。', 'error'); });
   }
   const player = audioPlayer;
   player.play().then(() => { if (player === audioPlayer) $('record-play').textContent = '⏸ 暂停'; }).catch(() => { if (player === audioPlayer) flash('播放没有成功。', 'error'); });

@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse,JSONResponse,StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .paths import WORK,OUTPUTS,SESSIONS,STATIC,DEPLOYMENT,API_PORT,ROOT
 from .runtime import Runtime
+from .system import open_folder as open_in_file_manager
 from .desktop import overview,FOLDERS,VERSION
 from .session import ClassSession
 from .languages import MODES
@@ -58,6 +59,21 @@ def state():
                 segments=list(active.segments.values())[-500:] if active else [],
                 ready=DEPLOYMENT.exists(),engine_root=str(ROOT),language_modes=list(MODES),version=VERSION)
 
+# The Windows launcher hosts the page in an Edge app window and stops the engine
+# once that window is gone; the page reports that it is still open.
+SHELL=dict(ping=None)
+
+@app.post('/api/shell/ping')
+def shell_ping():
+    SHELL['ping']=time.monotonic()
+    return dict(ok=True)
+
+@app.get('/api/shell')
+def shell_state():
+    ping=SHELL['ping']
+    busy=bool(active and active.state in ('loading','running','draining'))
+    return dict(ping_age=None if ping is None else time.monotonic()-ping,busy=busy)
+
 @app.get('/api/system')
 def system_overview():
     return overview(runtime)
@@ -82,7 +98,7 @@ async def control_models(target:str,action:str,request:Request):
 async def open_folder(kind:str):
     path=FOLDERS.get(kind)
     if path is None or not path.is_dir():raise HTTPException(404,'目录不存在')
-    try:await asyncio.to_thread(subprocess.run,['/usr/bin/open',str(path)],check=True,timeout=5)
+    try:await asyncio.to_thread(open_in_file_manager,path)
     except Exception:raise HTTPException(500,'无法打开文件夹')
     return dict(ok=True)
 

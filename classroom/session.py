@@ -9,6 +9,7 @@ import uuid
 import psutil
 import httpx
 from .paths import OUTPUTS,SESSIONS,LLAMA_URL,CAPTURE
+from .system import capture_command,decode_command,hidden_window
 from .store import SessionStore,check_integrity
 from .subtitles import SegmentComposer
 from .chinese import simplified_segment
@@ -216,14 +217,8 @@ class ClassSession:
 
     async def capture(self):
         try:
-            if self.source=='file':
-                import imageio_ffmpeg
-                cmd=[imageio_ffmpeg.get_ffmpeg_exe(),'-nostdin','-v','error','-i',str(self.upload),'-f','s16le','-ac','1','-ar','16000','pipe:1']
-            else:
-                binary=CAPTURE
-                if not binary.exists():raise RuntimeError('音频采集程序尚未构建')
-                cmd=[str(binary),self.source]
-            self.source_process=await asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+            cmd=decode_command(self.upload) if self.source=='file' else capture_command(CAPTURE,self.source)
+            self.source_process=await asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,**hidden_window())
             async def errors():
                 while line:=await self.source_process.stderr.readline():
                     message=line.decode(errors='replace').strip()

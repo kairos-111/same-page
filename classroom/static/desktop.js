@@ -48,7 +48,7 @@ async function loadSettings() {
       control.onclick=()=>controlModels(model.id,model.loaded ? 'stop' : 'start');
       row.append(dot,name,control);return row;
     }));
-    $('engine-ownership').textContent = nativeInfo ? (nativeInfo.owns_engine ? '由桌面应用管理本地引擎' : '连接已运行的本地引擎，退出窗口不会停止共享服务') : '浏览器预览 · 与桌面应用共享同一本地引擎';
+    $('engine-ownership').textContent = nativeInfo ? (nativeInfo.shell === 'windows' ? '由 Same Page 管理本地引擎，关闭窗口时一并退出' : nativeInfo.owns_engine ? '由桌面应用管理本地引擎' : '连接已运行的本地引擎，退出窗口不会停止共享服务') : '浏览器预览 · 与桌面应用共享同一本地引擎';
   } catch (e) { $('engine-summary').textContent = '未连接'; $('engine-status').classList.remove('running'); $('model-control-message').textContent = '暂时无法连接本地引擎'; $('settings-message').textContent = '无法读取设置：' + e.message; }
 }
 async function controlModels(target,action) {
@@ -125,8 +125,22 @@ async function stopAllModels() {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 }
+// Windows: the launcher opens this page in an Edge app window (?shell=windows).
+let liveActive = false;
+async function connectWindowsShell() {
+  nativeInfo = {shell: 'windows', development: false, owns_engine: true, version: ''};
+  const ping = () => post('/api/shell/ping').catch(() => {});
+  ping(); setInterval(ping, 20000);
+  try { const state = await getJSON('/api/state'); nativeInfo.version = state.version; $('desktop-version').textContent = state.version; } catch {}
+  // Closing the window during a translation: the launcher still saves it, but warn first.
+  window.addEventListener('beforeunload', event => { if (liveActive) { event.preventDefault(); event.returnValue = ''; } });
+  autoStartModels();
+}
 async function connectDesktop() {
-  if (!window.__TAURI__) return;
+  if (!window.__TAURI__) {
+    if (new URLSearchParams(location.search).get('shell') === 'windows') await connectWindowsShell();
+    return;
+  }
   try {
     nativeInfo = await window.__TAURI__.core.invoke('desktop_info');
     await window.__TAURI__.event.listen('desktop-close-requested', requestDesktopExit);
@@ -136,7 +150,7 @@ async function connectDesktop() {
 }
 // Update the return-to-live shortcut without changing the page being read.
 async function refreshLiveShortcut() {
-  try { const data = await getJSON('/api/state'); $('resume-class').hidden = !(data.session && ACTIVE.has(data.session.state)); } catch {}
+  try { const data = await getJSON('/api/state'); liveActive = !!(data.session && ACTIVE.has(data.session.state)); $('resume-class').hidden = !liveActive; } catch {}
 }
 connectDesktop();
 refreshLiveShortcut();

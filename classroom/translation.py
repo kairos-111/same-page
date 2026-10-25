@@ -122,6 +122,10 @@ class Glossary:
 
 PREVIEW_TIMEOUT = 3.0
 FINAL_TIMEOUT = 6.0
+import sys as _sys
+if _sys.platform == 'win32':
+    # Many Windows PCs translate on the CPU; give each request more room.
+    PREVIEW_TIMEOUT, FINAL_TIMEOUT = 8.0, 15.0
 
 
 def token_budget(text):

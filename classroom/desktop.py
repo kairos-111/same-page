@@ -1,13 +1,16 @@
 """Read-only desktop overview; no inference, download or audio capture."""
 import shutil
 from .paths import ROOT,WORK,MODELS,SESSIONS,OUTPUTS,DATA_ROOT
+from .system import WINDOWS,ASR_MODEL_FILES,asr_model_dir,asr_model_available
 
 VERSION='0.10.2'
 
 def overview(runtime):
-    specs=[('small','Whisper Small','默认识别 · 多语言',MODELS/'whisper-small','weights.*'),
-           ('turbo','Whisper Turbo','可选识别 · 需要更多算力',MODELS/'whisper-turbo','weights.*'),
+    specs=[('small','Whisper Small','默认识别 · 多语言',asr_model_dir(MODELS,'small'),ASR_MODEL_FILES),
+           ('turbo','Whisper Turbo','可选识别 · 需要更多算力',asr_model_dir(MODELS,'turbo'),ASR_MODEL_FILES),
            ('hy-mt','Hy-MT2 1.8B','本地中文翻译',MODELS/'hy-mt','*.gguf')]
+    # The Windows build ships Small only; do not offer a model that is not installed.
+    if WINDOWS and not asr_model_available(MODELS,'turbo'):specs=[s for s in specs if s[0]!='turbo']
     models=[]
     for key,name,description,directory,pattern in specs:
         available=any(p.is_file() and p.stat().st_size>0 for p in directory.glob(pattern))
@@ -18,6 +21,6 @@ def overview(runtime):
     return dict(version=VERSION,models=models,course_count=count,free_bytes=shutil.disk_usage(DATA_ROOT).free,
                 recognition_model=runtime.model,engine_loaded=bool(getattr(runtime,'asr_models',{})),
                 model_operation=getattr(runtime,'model_operation',None),model_error=getattr(runtime,'model_error',''),
-                local_only=True,development=DATA_ROOT==ROOT)
+                local_only=True,development=DATA_ROOT==ROOT,platform='windows' if WINDOWS else 'mac')
 
 FOLDERS={'courses':SESSIONS,'models':MODELS,'logs':WORK,'terms':OUTPUTS}

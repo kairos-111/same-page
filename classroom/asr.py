@@ -11,23 +11,33 @@ LONG_RUN_PAUSE = .3
 SENTENCE_END = ('.', '?', '!', '。', '？', '！', '…')
 
 class WhisperAdapter:
-    def __init__(self, model_path, hint='', language_mode='en'):
-        import mlx.core as mx
+    def __init__(self, model_path, hint='', language_mode='en', weights=None):
         import numpy as np
-        import torch
-        from whisperlivekit.local_agreement.backends import MLXWhisper
-        from whisperlivekit.local_agreement.online_asr import OnlineASRProcessor
-        from whisperlivekit.silero_vad_iterator import load_onnx_session, OnnxWrapper
-        torch.set_num_threads(2)
-        if not mx.metal.is_available():
-            raise RuntimeError('MLX 未检测到 Apple GPU')
         from .languages import MODES
-        from .language_detection import SpeechLanguageRouter,mlx_language_detector
+        from .language_detection import SpeechLanguageRouter
         if language_mode not in MODES:raise ValueError('识别模式无效')
         self.language_mode=language_mode
         language=language_mode if language_mode!='mixed' else None
-        self.language_router=SpeechLanguageRouter(mlx_language_detector(str(model_path.resolve()))) if language_mode=='mixed' else None
-        self.asr = MLXWhisper(lan=language or 'auto',model_dir=str(model_path))
+        if weights is not None:
+            # faster-whisper (Windows): same result shapes as MLX, no torch/mlx.
+            from .ct2_asr import CT2Whisper,NumpyVAD,NumpyBridge,language_detector,online_processor_class
+            OnlineASRProcessor=online_processor_class()
+            self.language_router=SpeechLanguageRouter(language_detector(weights)) if language_mode=='mixed' else None
+            self.asr = CT2Whisper(weights,lan=language or 'auto',model_dir=model_path)
+            vad=NumpyVAD();torch=NumpyBridge()
+        else:
+            import mlx.core as mx
+            import torch
+            from whisperlivekit.local_agreement.backends import MLXWhisper
+            from whisperlivekit.local_agreement.online_asr import OnlineASRProcessor
+            from whisperlivekit.silero_vad_iterator import load_onnx_session, OnnxWrapper
+            from .language_detection import mlx_language_detector
+            torch.set_num_threads(2)
+            if not mx.metal.is_available():
+                raise RuntimeError('MLX 未检测到 Apple GPU')
+            self.language_router=SpeechLanguageRouter(mlx_language_detector(str(model_path.resolve()))) if language_mode=='mixed' else None
+            self.asr = MLXWhisper(lan=language or 'auto',model_dir=str(model_path))
+            vad=OnnxWrapper(load_onnx_session())
         self.asr.tokenizer = None
         self.asr.confidence_validation = False
         self.asr.buffer_trimming = 'segment'
@@ -55,7 +65,7 @@ class WhisperAdapter:
         self.run_start = 0
         self.run_frontier = 0
         self.last_speech_end = 0
-        self.vad = OnnxWrapper(load_onnx_session())
+        self.vad = vad
         self.active = False
         self.silence = 0.0
         self.np = np

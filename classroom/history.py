@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 import re
 import shutil
-import subprocess
 
 SESSION_ID = re.compile(r'\d{8}-\d{6}-[0-9a-f]{8}')
 BUSY = {'loading', 'running', 'draining'}
@@ -38,7 +37,8 @@ def reveal_recording(path):
     if not recordings:
         raise FileNotFoundError('本次没有保留录音')
     target = next((p for p in recordings if p.suffix == '.wav'), recordings[0])
-    subprocess.run(['/usr/bin/open', '-R', str(target)], check=True, timeout=5)
+    from .system import reveal_file
+    reveal_file(target)
 
 
 def update_retention(path, keep):

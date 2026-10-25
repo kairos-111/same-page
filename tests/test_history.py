@@ -44,7 +44,7 @@ class HistoryTests(unittest.TestCase):
 
     def test_keep_and_reveal_use_wav_without_shell(self):
         update_retention(self.path,True)
-        with patch('classroom.history.subprocess.run') as run:
+        with patch('classroom.system.subprocess.run') as run:
             reveal_recording(self.path)
             self.assertEqual(run.call_args.args[0],['/usr/bin/open','-R',str(self.path/'audio_0000.wav')])
         self.assertEqual(len(audio_files(self.path)),2)

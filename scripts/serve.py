@@ -18,14 +18,16 @@ os.environ['HF_HOME']=str(WORK/'hf-cache')
 os.environ['NUMBA_CACHE_DIR']=str(WORK/'numba-cache')
 os.environ['MPLCONFIGDIR']=str(WORK/'matplotlib-cache')
 os.environ['XDG_CACHE_HOME']=str(WORK/'cache')
-if (root/'bundle.json').exists():os.environ.pop('IMAGEIO_FFMPEG_EXE',None)
-import imageio_ffmpeg
-ffmpeg=Path(imageio_ffmpeg.get_ffmpeg_exe())
-bindir=WORK/'bin';bindir.mkdir(parents=True,exist_ok=True)
-link=bindir/'ffmpeg'
-if link.is_symlink() and Path(os.readlink(link)) != ffmpeg:
-    link.unlink() # Replace only this app-owned cache link after moving/upgrading the app.
-if not link.exists() and not link.is_symlink():link.symlink_to(ffmpeg)
-os.environ['PATH']=str(bindir)+os.pathsep+os.environ.get('PATH','')
+if sys.platform!='win32':
+    # macOS decodes imported files with the bundled ffmpeg; Windows uses PyAV.
+    if (root/'bundle.json').exists():os.environ.pop('IMAGEIO_FFMPEG_EXE',None)
+    import imageio_ffmpeg
+    ffmpeg=Path(imageio_ffmpeg.get_ffmpeg_exe())
+    bindir=WORK/'bin';bindir.mkdir(parents=True,exist_ok=True)
+    link=bindir/'ffmpeg'
+    if link.is_symlink() and Path(os.readlink(link)) != ffmpeg:
+        link.unlink() # Replace only this app-owned cache link after moving/upgrading the app.
+    if not link.exists() and not link.is_symlink():link.symlink_to(ffmpeg)
+    os.environ['PATH']=str(bindir)+os.pathsep+os.environ.get('PATH','')
 import uvicorn
 uvicorn.run('classroom.app:app',host='127.0.0.1',port=API_PORT,log_level='info')

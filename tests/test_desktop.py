@@ -29,7 +29,7 @@ class DesktopTests(unittest.TestCase):
                 self.assertEqual((await client.post('/api/folders/logs')).status_code,403)
                 headers={'x-session-token':TOKEN}
                 self.assertEqual((await client.post('/api/folders/arbitrary',headers=headers)).status_code,404)
-                with patch('classroom.app.subprocess.run') as run:
+                with patch('classroom.system.subprocess.run') as run:
                     self.assertEqual((await client.post('/api/folders/logs',headers=headers)).status_code,200)
                     self.assertEqual(run.call_args.args[0][0],'/usr/bin/open')
                 data=(await client.get('/api/system')).json()
