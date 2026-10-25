@@ -213,9 +213,71 @@ async function loadHistory(append = false) {
     const items = data.items || [];
     historyItems = append ? [...historyItems, ...items] : items;
     renderHistory();
+    // 删除、恢复或改动记录后列表会重新读取，累计数据一起更新。
+    if (!append && view === 'library') loadLibraryStats();
   } catch {
     if (!append) { $('history-empty').hidden = false; $('history-empty').textContent = '暂时读不到以前的记录。'; }
   }
+}
+/* 我的记录顶部：累计听了多久、多少句、多少字，以及近 14 天。 */
+const MODE_NAME = {en: '英语', ru: '俄语', mixed: '混合'};
+function hoursMinutes(seconds) {
+  const m = Math.round(num(seconds) / 60);
+  return {h: Math.floor(m / 60), m: m % 60};
+}
+function bigCount(n) { return n >= 10000 ? (n / 10000).toFixed(1).replace(/\.0$/, '') + ' 万' : Math.round(n).toLocaleString('zh-CN'); }
+async function loadLibraryStats() {
+  try { renderLibraryStats(await getJSON('/api/stats')); }
+  catch { $('library-stats').hidden = true; }
+}
+function renderLibraryStats(t) {
+  const box = $('library-stats');
+  box.hidden = false;
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  if (!t.records || !num(t.audio_seconds)) {
+    const empty = el('div', 'lib-stats-empty');
+    empty.append(el('strong', '', '这里会记下你听过的每一分钟'), el('span', '', '完成第一次翻译后，累计时长、字幕句数和译文字数会出现在这里。'));
+    box.replaceChildren(empty);
+    return;
+  }
+  const time = hoursMinutes(t.audio_seconds);
+  const big = el('div', 'lib-big');
+  const part = (value, unit) => { const b = el('b', '', String(value)); big.append(b, el('small', '', unit)); return b; };
+  if (time.h) { const hb = part(time.h, '小时'); if (typeof countUp === 'function') countUp(hb, time.h, v => String(Math.round(v))); }
+  if (time.m || !time.h) { const mb = part(time.m, '分'); if (typeof countUp === 'function') countUp(mb, time.m, v => String(Math.round(v))); }
+  const modes = Object.entries(t.by_mode || {}).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
+  const band = el('div', 'lib-band');
+  const legend = el('div', 'lib-legend');
+  modes.forEach(([mode, seconds], i) => {
+    const seg = el('span', 'lib-seg m' + i);
+    seg.style.width = (seconds / t.audio_seconds * 100) + '%';
+    seg.title = (MODE_NAME[mode] || mode) + ' ' + duration(seconds);
+    band.append(seg);
+    legend.append(el('span', '', (MODE_NAME[mode] || mode) + ' ' + duration(seconds)));
+  });
+  const main = el('div', 'lib-main');
+  main.append(el('span', 'lib-label', '你已经和 Same Page 一起听了'), big, band, legend);
+  const side = el('div', 'lib-side');
+  for (const [value, label] of [[t.records, '次记录'], [t.sentences, '句字幕'], [t.translation_chars, '字译文']]) {
+    const stat = el('div', 'lib-stat');
+    stat.append(el('b', '', bigCount(value)), el('span', '', label));
+    side.append(stat);
+  }
+  const days = el('div', 'lib-days');
+  days.append(el('span', 'lib-label', '近 14 天'));
+  const cells = el('span', 'lib-cells');
+  for (const day of t.days || []) {
+    const minutes = num(day.seconds) / 60;
+    const cell = el('i', 'lib-cell l' + (minutes <= 0 ? 0 : minutes < 10 ? 1 : minutes < 60 ? 2 : 3));
+    const d = new Date(day.date + 'T00:00:00');
+    cell.title = (d.getMonth() + 1) + '/' + d.getDate() + (minutes > 0 ? ' · ' + duration(day.seconds) : ' · 没有记录');
+    cells.append(cell);
+  }
+  days.append(cells);
+  const lastActive = [...(t.days || [])].reverse().findIndex(d => num(d.seconds) > 0);
+  days.append(el('span', 'lib-streak', t.streak >= 2 ? '连续 ' + t.streak + ' 天' : lastActive === 0 ? '今天有记录' : lastActive === 1 ? '昨天有记录' : lastActive > 1 ? '上次是 ' + lastActive + ' 天前' : ''));
+  side.append(days);
+  box.replaceChildren(main, side);
 }
 function historyFilter() {
   const chip = document.querySelector('.chip[aria-pressed="true"]');

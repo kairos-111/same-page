@@ -9,7 +9,6 @@ async function navigatePage(page) {
 }
 document.querySelectorAll('[data-page]').forEach(button => { button.onclick = () => navigatePage(button.dataset.page); });
 $('home-library').onclick = () => navigatePage('library');
-$('library-new').onclick = () => navigatePage('start');
 $('engine-status').onclick = () => navigatePage('settings');
 // 搜索与筛选逻辑统一在 app.js 中维护。
 $('resume-class').onclick = async () => {

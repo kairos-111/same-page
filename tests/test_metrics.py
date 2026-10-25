@@ -172,3 +172,53 @@ class OverviewTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TotalsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def seg(self, sid, text, final=True, unresolved=False):
+        e = dict(type='segment', id=sid, start=0, end=1, final=final, source='x', translation=text)
+        if unresolved:
+            e['asr_status'] = 'unresolved'
+        return e
+
+    def test_time_sentences_characters_and_streak(self):
+        from datetime import date
+        write_record(self.root, '20261025-100000-0000000a',
+                     [self.seg('s1', '旧译文', final=False), self.seg('s1', '你好 世界'), self.seg('s2', '再见'),
+                      self.seg('s3', '预览', final=False), self.seg('s4', '撤回', unresolved=True)],
+                     audio_seconds=600, started_at='2026-10-25T10:00:00+07:00')
+        write_record(self.root, '20261024-100000-0000000b', [self.seg('s1', '一二三')], audio_seconds=300,
+                     language_mode='ru', started_at='2026-10-24T10:00:00+07:00')
+        write_record(self.root, '20261020-100000-0000000c', [], audio_seconds=60, language_mode='mul',
+                     state='loading', started_at='2026-10-20T10:00:00+07:00')
+        write_record(self.root, '20261025-120000-0000000d', [self.seg('s1', '正在录')], audio_seconds=999)
+        (self.root / '.trash').mkdir()
+        write_record(self.root / '.trash', '20261025-130000-0000000e', [self.seg('s1', '废纸篓')], audio_seconds=500)
+        t = metrics.totals(self.root, busy_ids=('20261025-120000-0000000d',), today=date(2026, 10, 25))
+        self.assertEqual(t['records'], 3, 'an unfinished old record still counts; the live one and the trash do not')
+        self.assertEqual(t['audio_seconds'], 960)
+        self.assertEqual(t['sentences'], 3, 'only the latest confirmed revision of each sentence')
+        self.assertEqual(t['translation_chars'], 4 + 2 + 3, 'spaces are not characters')
+        self.assertEqual(t['by_mode'], {'en': 600, 'ru': 300, 'mixed': 60})
+        self.assertEqual(t['streak'], 2)
+        self.assertEqual(len(t['days']), 14)
+        self.assertEqual(t['days'][-1], {'date': '2026-10-25', 'seconds': 600})
+        self.assertEqual(metrics.totals(self.root, today=date(2026, 10, 26))['streak'], 2, 'yesterday keeps the streak')
+        self.assertEqual(metrics.totals(self.root, today=date(2026, 10, 28))['streak'], 0)
+
+    def test_stats_endpoint(self):
+        write_record(self.root, '20261025-100000-0000000a', [self.seg('s1', '你好')], audio_seconds=120)
+        async def run():
+            with patch('classroom.app.SESSIONS', self.root):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://127.0.0.1:8767') as client:
+                    return await client.get('/api/stats')
+        response = asyncio.run(run())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['translation_chars'], 2)

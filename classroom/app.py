@@ -161,6 +161,11 @@ def metrics_overview(days:int=30,model:str='all'):
     if model not in ('all','small','turbo'):raise HTTPException(400,'模型筛选无效')
     return metrics.overview(SESSIONS,days=max(0,min(days,3650)),model=model,busy_ids=busy_session_ids())
 
+@app.get('/api/stats')
+def listening_totals():
+    """Totals for the 我的记录 header: finished records only, trash excluded."""
+    return metrics.totals(SESSIONS,busy_ids=busy_session_ids())
+
 @app.get('/api/sessions/{session_id}/metrics')
 def record_metrics(session_id:str):
     return metrics.detail(ended_class(session_id))

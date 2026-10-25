@@ -325,8 +325,9 @@ html.subtitle-open, html.subtitle-open body { overflow: hidden; }
 #history-summary { font-size: 12px; color: var(--soft); }
 #library-view .history { margin-top: 0; }
 #library-view .history h2 { display: none; }
-#library-view .history-list li { padding: 20px 8px; gap: 10px; }
-#library-view .h-main { flex-basis: calc(100% - 20px); margin-bottom: 6px; }
+#library-view .history-list li { padding: 16px 8px; gap: 14px; flex-wrap: nowrap; }
+#library-view .h-actions { flex: none; }
+#library-view .h-main { flex: 1 1 260px; }
 #library-view .h-title { font-size: 16px; font-weight: 550; }
 #library-view .h-meta { margin-top: 7px; }
 /* 行内只留两个显性动作，其余收进一个「⋯」菜单，长列表才不会变成按钮墙。 */
@@ -598,3 +599,26 @@ html.subtitle-open, html.subtitle-open body { overflow: hidden; }
 @media (max-width: 1180px) { .m-row { grid-template-columns: minmax(0, 1fr) 96px minmax(120px, 190px) 16px; } .m-row .m-row-spark { display: none; } }
 @media (max-width: 860px) { .m-hero-grid, .m-split { grid-template-columns: 1fr; } .m-hero-side { border-left: 0; border-top: 1px solid var(--line); } .m-detail-head { flex-direction: column; align-items: flex-start; } }
 @media (prefers-reduced-motion: reduce) { .m-dist-seg, .m-stack-seg, .m-hist-bar, .m-rise, .m-strip { transition: none; } }
+
+/* 我的记录：累计数据条。突出“听了多久”，其余三项与近 14 天放右侧。 */
+#library-view .workspace-header { margin-bottom: 22px; }
+.lib-stats { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; align-items: center; margin-bottom: 26px; padding: 18px 22px; background: linear-gradient(120deg, var(--accent-soft), var(--card) 55%); border: 1px solid var(--line); border-radius: 14px; }
+.lib-label { font-size: 12px; color: var(--soft); }
+.lib-big { display: flex; align-items: baseline; gap: 4px; margin: 2px 0 10px; }
+.lib-big b { font-size: 40px; line-height: 1.05; font-weight: 650; letter-spacing: -.03em; color: var(--accent); font-variant-numeric: tabular-nums; }
+.lib-big small { font-size: 14px; color: var(--soft); margin-right: 8px; }
+.lib-band { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); max-width: 420px; }
+.lib-seg.m0 { background: var(--accent); } .lib-seg.m1 { background: color-mix(in srgb, var(--accent) 55%, var(--card)); } .lib-seg.m2 { background: color-mix(in srgb, var(--accent) 28%, var(--card)); }
+.lib-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12px; color: var(--soft); }
+.lib-side { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; }
+.lib-stat b { display: block; font-size: 22px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.lib-stat span { font-size: 12px; color: var(--soft); }
+.lib-days { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lib-cells { display: inline-flex; gap: 3px; }
+.lib-cell { width: 11px; height: 11px; border-radius: 3px; background: var(--line); }
+.lib-cell.l1 { background: color-mix(in srgb, var(--accent) 30%, var(--card)); } .lib-cell.l2 { background: color-mix(in srgb, var(--accent) 65%, var(--card)); } .lib-cell.l3 { background: var(--accent); }
+.lib-streak { font-size: 12px; color: var(--accent); font-weight: 600; }
+.lib-stats-empty strong { display: block; font-size: 15px; margin-bottom: 4px; } .lib-stats-empty span { font-size: 13px; color: var(--soft); }
+.lib-stats:has(.lib-stats-empty) { grid-template-columns: 1fr; }
+@media (max-width: 860px) { .lib-stats { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { #library-view .history-list li { flex-wrap: wrap; } }

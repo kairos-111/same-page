@@ -94,7 +94,7 @@ def compute(path):
         meta = json.loads((path / 'session.json').read_text())
     except (OSError, ValueError):
         meta = {}
-    segments, status, sentence_lag = {}, [], []
+    segments, texts, status, sentence_lag = {}, {}, [], []
     executions, queues, finalizes = [], [], []
     events, counts = [], {}
     has_attempts = False
@@ -103,6 +103,7 @@ def compute(path):
         counts[kind] = counts.get(kind, 0) + 1
         if kind == 'segment' and event.get('id'):
             segments[event['id']] = (event.get('start', 0), event.get('end', 0))
+            texts[event['id']] = event
         elif kind == 'status':
             if event.get('state') == 'running':
                 status.append(event)
@@ -149,6 +150,9 @@ def compute(path):
             events.append(dict(t=start, end=end, kind='silence', level='info', value=peak,
                                text='连续 {:.0f} 秒没有收到声音'.format(peak)))
     events.sort(key=lambda e: (e['t'], e['kind']))
+    # Confirmed subtitles only; the latest revision of each sentence counts once.
+    finals = [e for e in texts.values() if e.get('final') and e.get('asr_status') != 'unresolved']
+    translation_chars = sum(len(''.join(str(e.get('translation') or '').split())) for e in finals)
     integrity = meta.get('integrity') or {}
     first = meta.get('first_translation_latency') or []
     final = meta.get('final_translation_latency') or []
@@ -175,6 +179,7 @@ def compute(path):
         series=dict(lag=downsample(lag_points), asr=downsample(asr_points), sentences=downsample(sentence_lag)),
         events=events[:MAX_EVENTS], event_total=len(events), counts=counts,
         log_bytes=(path / 'events.jsonl').stat().st_size if (path / 'events.jsonl').exists() else 0,
+        sentences=len(finals), translation_chars=translation_chars,
         first_values=list(first), final_values=list(final),
     )
 
@@ -259,3 +264,39 @@ def overview(root, days=30, model='all', busy_ids=()):
         row['spark'] = downsample(r['series']['asr'], 48)
         light.append(row)
     return dict(summary=total, records=light, thresholds=dict(ok=LAG_OK, behind=LAG_BEHIND))
+
+
+def totals(root, busy_ids=(), today=None, days=14):
+    """What the user has listened to so far: time, sentences, characters and recent days."""
+    root = Path(root)
+    today = today or datetime.now().astimezone().date()
+    by_mode, by_day = {}, {}
+    count = sentences = chars = 0
+    seconds = 0.0
+    for directory in sorted(root.iterdir() if root.exists() else []):
+        if not directory.is_dir() or directory.name.startswith('.') or directory.name in busy_ids:
+            continue
+        if not (directory / 'session.json').is_file():
+            continue
+        # Count every record the list shows; only the one being made right now is left out.
+        item = CACHE.get(directory)
+        audio = float(item.get('audio_seconds') or 0)
+        count += 1
+        seconds += audio
+        sentences += item.get('sentences', 0)
+        chars += item.get('translation_chars', 0)
+        mode = 'mixed' if item.get('language_mode') == 'mul' else item.get('language_mode') or 'en'
+        by_mode[mode] = by_mode.get(mode, 0) + audio
+        started = _started(item)
+        if started:
+            key = started.date().isoformat()
+            by_day[key] = by_day.get(key, 0) + audio
+    recent = [(today - timedelta(days=offset)).isoformat() for offset in range(days - 1, -1, -1)]
+    # A streak still counts if the last day with a record was yesterday.
+    streak, day = 0, today if today.isoformat() in by_day else today - timedelta(days=1)
+    while day.isoformat() in by_day:
+        streak += 1
+        day -= timedelta(days=1)
+    return dict(records=count, audio_seconds=seconds, sentences=sentences, translation_chars=chars,
+                by_mode=by_mode, days=[dict(date=d, seconds=by_day.get(d, 0)) for d in recent],
+                streak=streak, active_days=len(by_day))
