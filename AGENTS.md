@@ -25,6 +25,8 @@
 
 ## 常用检查
 
+日常迭代只跑与本次改动相关的关键测试（改哪个模块就跑对应测试文件，加上 `node --check` 和 `git diff --check`），不必每次跑全量；测试通过后直接提交，无需再征求用户确认。提交信息写清改动与验证情况。
+
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --check classroom/static/app.js

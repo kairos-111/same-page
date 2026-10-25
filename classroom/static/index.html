@@ -13,6 +13,7 @@
   <nav>
     <button class="nav-item selected" data-page="start"><span aria-hidden="true">◉</span>开始翻译</button>
     <button class="nav-item" data-page="library"><span aria-hidden="true">▤</span>我的记录<span id="library-count" class="nav-count"></span></button>
+    <button class="nav-item" data-page="metrics"><span aria-hidden="true">◔</span>运行数据</button>
     <button class="nav-item" data-page="settings"><span aria-hidden="true">⚙</span>设置</button>
   </nav>
   <button id="resume-class" class="resume-class" hidden>● 返回正在进行的翻译</button>
@@ -102,6 +103,17 @@
       <p id="history-empty" class="history-empty">还没有记录。每次翻译的字幕都会保存在这里。</p>
       <button id="history-more" type="button" class="btn-ghost" hidden>加载更多记录</button>
     </section>
+</section>
+<section id="metrics-view" class="workspace-view metrics-view" hidden aria-labelledby="metrics-heading">
+  <div id="metrics-overview">
+    <header class="workspace-header"><div><p class="eyebrow">每一秒，都有迹可循</p><h1 id="metrics-heading">运行数据</h1><p class="workspace-description">字幕跟得多快、哪里卡过，全部来自本机记录。只计处理时间，不代表识别或翻译是否准确。</p></div>
+      <div class="m-filters"><div class="m-seg" role="radiogroup" aria-label="时间范围"><button type="button" role="radio" data-days="7" aria-checked="false">近 7 天</button><button type="button" role="radio" data-days="30" aria-checked="true">近 30 天</button><button type="button" role="radio" data-days="0" aria-checked="false">全部</button></div><select id="m-model" aria-label="识别模型"><option value="all">全部模型</option><option value="small">Small</option><option value="turbo">Turbo</option></select></div>
+    </header>
+    <section id="m-hero" class="m-hero" aria-live="polite"></section>
+    <section class="m-card"><div class="m-card-head"><h2>每次记录的出字延迟</h2><span class="m-legend"><i class="m-dot lv-ok"></i>中位 <i class="m-whisker"></i>95% 的句子</span></div><div id="m-trend" class="m-chart"></div></section>
+    <section class="m-card"><div class="m-card-head"><h2>记录</h2><span id="m-count" class="m-note"></span></div><div id="m-table" class="m-table"></div></section>
+  </div>
+  <div id="metrics-detail" hidden></div>
 </section>
 <section id="settings-view" class="workspace-view" hidden aria-labelledby="settings-heading">
   <header class="workspace-header"><div><p class="eyebrow">按你的习惯使用</p><h1 id="settings-heading">设置</h1><p class="workspace-description">管理本机模型、阅读习惯和记录文件。</p></div><span class="settings-local">本机离线</span></header>
@@ -245,6 +257,7 @@
 </dialog>
 <dialog id="desktop-exit" aria-labelledby="desktop-exit-heading"><h2 id="desktop-exit-heading">退出 Same Page？</h2><p id="desktop-exit-message"></p><p id="desktop-exit-error" role="status"></p><div class="recording-actions"><button id="exit-cancel" class="btn-ghost">继续使用</button><button id="exit-confirm" class="btn-primary">退出应用</button></div></dialog>
 <script src="/static/app.js?v=0.10.2"></script>
+<script src="/static/metrics.js?v=0.10.2"></script>
 <script src="/static/desktop.js?v=0.10.2"></script>
 </body>
 </html>

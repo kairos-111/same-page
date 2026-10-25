@@ -18,7 +18,7 @@ from .session import ClassSession
 from .languages import MODES
 from .store import SessionStore,export_session
 from .history import session_path,audio_files,ensure_ended,reveal_recording,remove_class,update_retention,remove_unused_upload
-from . import library
+from . import library, metrics
 
 runtime=Runtime()
 active=None
@@ -154,6 +154,16 @@ def library_page(q:str='',limit:int=200,offset:int=0,favorite:bool=False,review:
     favourite record on page 3 must still be counted and reachable.
     """
     return library.list_sessions(SESSIONS,query=q,limit=limit,offset=offset,favorite=favorite,review=review,busy_ids=busy_session_ids())
+
+@app.get('/api/metrics')
+def metrics_overview(days:int=30,model:str='all'):
+    """Process timings across finished records for the data page; read-only."""
+    if model not in ('all','small','turbo'):raise HTTPException(400,'模型筛选无效')
+    return metrics.overview(SESSIONS,days=max(0,min(days,3650)),model=model,busy_ids=busy_session_ids())
+
+@app.get('/api/sessions/{session_id}/metrics')
+def record_metrics(session_id:str):
+    return metrics.detail(ended_class(session_id))
 
 def ended_class(session_id):
     try:

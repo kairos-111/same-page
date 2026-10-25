@@ -91,11 +91,13 @@ function show(next) {
   $('live-view').hidden = next !== 'live';
   $('library-view').hidden = next !== 'library';
   $('settings-view').hidden = next !== 'settings';
-  document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('selected', b.dataset.page === (next === 'live' ? (viewingHistory ? 'library' : 'start') : next)));
+  $('metrics-view').hidden = next !== 'metrics';
+  document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('selected', b.dataset.page === (next === 'live' ? (viewingHistory ? historyReturnPage : 'start') : next)));
   document.title = next === 'live' && current ? (current.title || '记录') + ' · Same Page' : 'Same Page';
   if (next === 'start') { renderStart(); loadHistory(); }
   else if (next === 'library') loadHistory();
   else if (next === 'settings') loadSettings();
+  else if (next === 'metrics') { if (typeof metricsShown === 'function') metricsShown(); }
   else { finishAll(); renderLive(); requestAnimationFrame(() => { if (viewingHistory) { following = false; scroller.scrollTop = 0; $('jump').hidden = nearEnd(); } else toEnd(false); }); }
 }
 
@@ -442,23 +444,44 @@ function historyRow(item) {
   return li;
 }
 
-async function openHistory(id, busy = false) {
+// 从哪一页打开的记录，返回时就回到哪一页（我的记录或运行数据）。
+let historyReturnPage = 'library';
+async function openHistory(id, busy = false, returnPage = 'library') {
   const request = ++openingHistory;
   try {
     const data = await getJSON(busy ? '/api/state' : '/api/sessions/' + encodeURIComponent(id));
-    if (request !== openingHistory) return;
+    if (request !== openingHistory) return false;
+    historyReturnPage = returnPage;
     viewingHistory = !busy;
     snapshot(data.session, data.segments);
     show('live');
-  } catch (e) { flash(e.message || '无法打开这条记录'); }
+    return true;
+  } catch (e) { flash(e.message || '无法打开这条记录'); return false; }
+}
+// 在已打开的记录里跳到某个时间点，并短暂高亮那一句。
+function revealTime(seconds) {
+  let target = null;
+  for (const entry of rows.values()) {
+    if (num(entry.data.end) >= seconds) { target = entry; break; }
+    target = entry;
+  }
+  if (!target) return false;
+  following = false;
+  target.enEl.scrollIntoView({block: 'center', behavior: reduceMotion ? 'auto' : 'smooth'});
+  for (const node of [target.enEl, target.zhEl]) {
+    node.classList.add('flash');
+    setTimeout(() => node.classList.remove('flash'), 2400);
+  }
+  return true;
 }
 async function leaveHistory() {
-  if (!viewingHistory) { show('library'); return; }
+  const back = historyReturnPage;
+  if (!viewingHistory) { show(back); return; }
   try {
     const data = await getJSON('/api/state');
     viewingHistory = false;
     if (data.session) snapshot(data.session, data.segments); else clearSession();
-    show('library');
+    show(back);
   } catch (e) { flash(e.message || '暂时无法返回，请稍后重试'); }
 }
 
@@ -574,7 +597,7 @@ function renderLive() {
   }
   $('recording-choice').hidden = active || !s.saved || s.recording_decision !== 'pending' || !num(s.audio_seconds);
   maybePromptRecording(s);
-  $('new-class').textContent = viewingHistory ? '返回历史记录' : '开始新的翻译';
+  $('new-class').textContent = viewingHistory ? (historyReturnPage === 'metrics' ? '返回运行数据' : '返回历史记录') : '开始新的翻译';
   $('jump').textContent = viewingHistory ? '↓ 到最后' : '↓ 回到最新';
   renderBanner();
 }
