@@ -27,6 +27,8 @@
 
 日常迭代只跑与本次改动相关的关键测试（改哪个模块就跑对应测试文件，加上 `node --check` 和 `git diff --check`），不必每次跑全量；测试通过后直接提交，无需再征求用户确认。提交信息写清改动与验证情况。
 
+提交后直接装进本机应用，无需询问（2026-10-25 用户要求）：先查 8877 `/api/state`，有 loading/running/draining 会话或模型正在启停就暂缓并告知用户；空闲时把 `classroom/` 用 rsync（排除缓存）同步到 `Same Page.app/Contents/Resources/engine/classroom/`，`scripts/serve.py` 一并同步；改了 `desktop/` 才重新编译 release 程序替换 `Contents/MacOS/tingke-desktop`；然后 `codesign --force --deep --sign -` 并 `--verify --deep --strict`。最后停止空闲的引擎和应用进程再重新打开，核对新接口可用。版本号变化时同步 `bundle.json`、`work/deployment.json` 和 Info.plist。
+
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --check classroom/static/app.js
