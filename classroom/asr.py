@@ -6,6 +6,8 @@ BACKLOG_NO_RETRY = 5  # seconds of unrecognised audio
 BUFFER_SECONDS = 6
 END_PAUSE = 1.0           # pause that ends a sentence
 END_PAUSE_PUNCTUATED = .5  # shorter pause once the words already end a sentence
+LONG_RUN = 6.0            # a sentence this long ends at any short breath
+LONG_RUN_PAUSE = .3
 SENTENCE_END = ('.', '?', '!', '。', '？', '！', '…')
 
 class WhisperAdapter:
@@ -123,7 +125,9 @@ class WhisperAdapter:
             return self._result([], [], False, waiting=True)
         except RejectedRecognition:
             return self._reject(end_seconds)
-        if self.silence>=END_PAUSE or (self.silence>=END_PAUSE_PUNCTUATED and self._ends_sentence(committed)):
+        if (self.silence>=END_PAUSE
+                or (self.silence>=END_PAUSE_PUNCTUATED and self._ends_sentence(committed))
+                or (self.silence>=LONG_RUN_PAUSE and end_seconds-self.run_start>=LONG_RUN)):
             rest,_=self.online.finish()
             committed += self.recovery.accept(rest)
             self._close_run(end_seconds)

@@ -131,6 +131,18 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.s.audio_started)
         self.assertIn('audio_started_at', self.s.store.metadata)
 
+    async def test_quick_single_language_sessions_use_half_second_steps(self):
+        self.s.asr_last_seconds=.2
+        self.assertEqual(self.s.recognition_step(),8000)
+        self.s.asr_last_seconds=.5
+        self.assertEqual(self.s.recognition_step(),16000,'slow decodes keep the one-second step')
+        self.s.asr_last_seconds=.2
+        self.s.fast_import=True
+        self.assertEqual(self.s.recognition_step(),16000,'imports already run ahead')
+        self.s.fast_import=False
+        self.s.language_mode='mixed'
+        self.assertEqual(self.s.recognition_step(),16000,'mixed mode needs the longer window')
+
     async def test_status_reports_microphone_readiness(self):
         self.assertFalse(self.s.status()['capture_ready'])
         self.s.capture_ready = True

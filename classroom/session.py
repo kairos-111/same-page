@@ -16,6 +16,10 @@ from .translation import Glossary,LocalTranslator,RevisionQueue,apply_translatio
 from .process import terminate_and_drain
 from .languages import MODES,chinese_passthrough,source_language,text_languages,clean_asr_text
 
+FAST_STEP_LANGUAGES=('en','ru')
+FAST_STEP_SAMPLES=8000   # 0.5 s of 16 kHz audio
+FAST_STEP_DECODE=.35     # last decode must finish faster than this
+
 class ClassSession:
     def __init__(self,runtime,source,model,title,upload=None,realtime=True,language_mode='en'):
         if language_mode not in MODES:raise ValueError('识别模式无效')
@@ -259,7 +263,7 @@ class ClassSession:
         cursor=0
         while not self.input_done or cursor*2<self.recognition_end():
             available=self.recognition_end()//2-cursor
-            if available<16000 and not self.input_done:
+            if available<self.recognition_step() and not self.input_done:
                 await asyncio.sleep(.1);continue
             if available<=0:break
             # Catch up from disk, never by dropping unread audio.
@@ -279,6 +283,14 @@ class ClassSession:
         self.accept_asr_result(result)
         self.asr_flushed=True
         self.queue.close()
+
+    def recognition_step(self):
+        # Samples to wait for before the next decode. Single-language live sessions use
+        # half-second steps while decoding is quick and nothing is queued; mixed mode,
+        # fast imports and a busy decoder keep the one-second step.
+        quick=(self.language_mode in FAST_STEP_LANGUAGES and not self.fast_import
+            and self.asr_last_seconds<FAST_STEP_DECODE)
+        return FAST_STEP_SAMPLES if quick else 16000
 
     def recognition_end(self):
         # Stopping a fast import ends recognition where it stands; the rest of the file

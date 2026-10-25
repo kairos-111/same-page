@@ -202,6 +202,26 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(flush, 'a full stop plus half a second of pause ends the sentence')
         self.assertEqual([w.text for w in words],['voice.'])
 
+    def test_long_sentence_ends_at_a_short_breath(self):
+        a=adapter()
+        a.vad=lambda f,r: SimpleNamespace(item=lambda: .9)
+        a.online.next_words=[Token(0,.5,'and')]
+        for end in range(1,8):
+            flush=a.process(pcm(1,100),end)[2]
+            self.assertFalse(flush,'continuous speech never pauses')
+        a.online.transcript_buffer.buffer=[Token(6.5,6.9,'then')]
+        a.vad=lambda f,r: SimpleNamespace(item=lambda: 0)
+        self.assertTrue(a.process(pcm(.5),7.5)[2],'over 6 s, a 0.3 s breath ends the sentence')
+
+    def test_short_sentence_still_waits_for_a_full_pause(self):
+        a=adapter()
+        a.vad=lambda f,r: SimpleNamespace(item=lambda: .9)
+        a.online.next_words=[Token(0,.5,'and')]
+        a.process(pcm(1,100),1)
+        a.online.transcript_buffer.buffer=[Token(.6,.9,'then')]
+        a.vad=lambda f,r: SimpleNamespace(item=lambda: 0)
+        self.assertFalse(a.process(pcm(.5),1.5)[2])
+
     def test_pause_is_measured_from_the_last_voiced_frame(self):
         a=adapter()
         a.process(pcm(2),2)
