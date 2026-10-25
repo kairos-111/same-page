@@ -3,6 +3,10 @@ from .asr_recovery import RecoveryGuard
 from .asr_quality import GuardedDecoder, RejectedRecognition, RecognitionPending
 
 BACKLOG_NO_RETRY = 5  # seconds of unrecognised audio
+BUFFER_SECONDS = 6
+END_PAUSE = 1.0           # pause that ends a sentence
+END_PAUSE_PUNCTUATED = .5  # shorter pause once the words already end a sentence
+SENTENCE_END = ('.', '?', '!', '。', '？', '！', '…')
 
 class WhisperAdapter:
     def __init__(self, model_path, hint='', language_mode='en'):
@@ -25,7 +29,9 @@ class WhisperAdapter:
         self.asr.tokenizer = None
         self.asr.confidence_validation = False
         self.asr.buffer_trimming = 'segment'
-        self.asr.buffer_trimming_sec = 10
+        # Each step re-decodes the unconfirmed buffer; a shorter buffer keeps long
+        # lectures from falling behind (was 10 s).
+        self.asr.buffer_trimming_sec = BUFFER_SECONDS
         prompt='An English lecture.' if language_mode=='en' else 'Русская речь.' if language_mode=='ru' else ''
         if hint:prompt+=' Topics include '+hint.rstrip(', .')+'.'
         self.decoder = GuardedDecoder(self.asr.model, self.asr.model_size_or_path, prompt, language, self.language_router)
@@ -103,14 +109,13 @@ class WhisperAdapter:
             audio = np.frombuffer(data,dtype='<i2').astype(np.float32)/32768.0
         self.online.insert_audio_chunk(audio)
         self.active = True
-        if speech:
-            self.silence=0
-            self.last_speech_end=speech_end
-        else:self.silence+=len(audio)/16000
+        if speech:self.last_speech_end=speech_end
+        # Pause since the last voiced frame, not since the last fully silent chunk.
+        self.silence=max(0.0,end_seconds-max(self.last_speech_end,self.run_start))
         try:
             self.decoder.offset = self.online.buffer_time_offset
             self.decoder.frontier = getattr(self.recovery,'frontier',self.decoder.offset)
-            self.decoder.finalizing = self.silence>=1
+            self.decoder.finalizing = self.silence>=END_PAUSE
             router=getattr(self,'language_router',None)
             if router:router.frontier=self.recovery.frontier
             committed,_ = self.recovery.process_iter()
@@ -118,7 +123,7 @@ class WhisperAdapter:
             return self._result([], [], False, waiting=True)
         except RejectedRecognition:
             return self._reject(end_seconds)
-        if self.silence>=1:
+        if self.silence>=END_PAUSE or (self.silence>=END_PAUSE_PUNCTUATED and self._ends_sentence(committed)):
             rest,_=self.online.finish()
             committed += self.recovery.accept(rest)
             self._close_run(end_seconds)
@@ -127,6 +132,12 @@ class WhisperAdapter:
         partial=[w for w in self.online.transcript_buffer.buffer if w.end>self.recovery.frontier+1e-6]
         self.online.committed=self.online.committed[-300:]
         return self._result(committed, partial, False)
+
+    def _ends_sentence(self, committed):
+        buffer=getattr(self.online,'transcript_buffer',None)
+        words=list(committed)+list(getattr(buffer,'buffer',[]) or [])
+        if not words and getattr(self.online,'committed',None):words=self.online.committed[-1:]
+        return bool(words) and str(words[-1].text).strip().endswith(SENTENCE_END)
 
     def _close_run(self, end):
         if self.recovery.frontier <= self.run_frontier:

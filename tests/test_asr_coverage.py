@@ -180,14 +180,36 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(a.online.buffer_time_offset,1.25)
         self.assertEqual(len(a.online.audio_buffer),28000)
         self.assertTrue(any(e['action']=='preroll_replay' for e in a.drain_events()))
-        a.online.transcript_buffer.buffer=[Token(2.5,2.9,'voice.')]
+        # Without sentence-ending punctuation a short pause does not end the sentence.
+        a.online.transcript_buffer.buffer=[Token(2.5,2.9,'voice')]
         a.vad=lambda f,r: SimpleNamespace(item=lambda: 0)
         self.assertFalse(a.process(pcm(.5),3.5)[2])
         words,_,flush=a.process(pcm(.5),4)[:3]
         self.assertTrue(flush)
-        self.assertEqual([w.text for w in words],['voice.'])
+        self.assertEqual([w.text for w in words],['voice'])
         self.assertEqual(a.finish(),([],[],True))
         self.assertFalse(any(e['action']=='gap' for e in a.drain_events()))
+
+    def test_punctuated_sentence_ends_after_a_short_pause(self):
+        a=adapter()
+        a.process(pcm(2),2)
+        a.vad=lambda f,r: SimpleNamespace(item=lambda: .3)
+        a.online.next_words=[Token(1.3,1.5,'Soft')]
+        a.process(pcm(1,100),3)
+        a.online.transcript_buffer.buffer=[Token(2.5,2.9,'voice.')]
+        a.vad=lambda f,r: SimpleNamespace(item=lambda: 0)
+        words,_,flush=a.process(pcm(.5),3.5)[:3]
+        self.assertTrue(flush, 'a full stop plus half a second of pause ends the sentence')
+        self.assertEqual([w.text for w in words],['voice.'])
+
+    def test_pause_is_measured_from_the_last_voiced_frame(self):
+        a=adapter()
+        a.process(pcm(2),2)
+        frames=iter([.9]*4+[0]*60)  # speech only in the first 4 frames (~0.13 s) of the chunk
+        a.vad=lambda f,r: SimpleNamespace(item=lambda: next(frames))
+        a.online.next_words=[Token(1.3,1.5,'Soft')]
+        a.process(pcm(1,100),3)
+        self.assertGreater(a.silence,.8,'the quiet tail of a speech chunk already counts as pause')
 
     def test_noise_without_vad_candidate_stays_skip_and_empty_speech_is_reviewable(self):
         a=adapter(.1)

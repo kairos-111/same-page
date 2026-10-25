@@ -139,3 +139,21 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PreviewCadenceTests(unittest.TestCase):
+    def item(self, text):
+        return dict(source=text, final=False)
+
+    def test_first_preview_after_three_words(self):
+        from classroom.translation import preview_due
+        self.assertFalse(preview_due(self.item('so the'), None, 0))
+        self.assertTrue(preview_due(self.item('so the key'), None, 0))
+
+    def test_refresh_every_two_new_words_or_three_seconds(self):
+        from classroom.translation import preview_due
+        sent = dict(source='so the key idea', dispatched_at=10)
+        self.assertFalse(preview_due(self.item('so the key idea is that'), sent, 10.5), 'too soon')
+        self.assertTrue(preview_due(self.item('so the key idea is that'), sent, 10.8))
+        self.assertFalse(preview_due(self.item('so the key idea is'), sent, 12))
+        self.assertTrue(preview_due(self.item('so the key idea is'), sent, 13))

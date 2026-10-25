@@ -28,12 +28,20 @@ def critical_signature(text):
     return latin+extra
 
 
+# Preview cadence: Chinese for a sentence still being spoken. Each preview costs
+# about 0.1-0.3 s of the translation model, which is otherwise mostly idle.
+PREVIEW_FIRST_WORDS = 3   # was 4
+PREVIEW_STEP_WORDS = 2    # was 4
+PREVIEW_MIN_GAP = .8      # seconds; was 1
+PREVIEW_MAX_GAP = 3       # seconds; was 5
+
+
 def preview_due(item, previous, now):
     if item['final']:
         return True
     text=item['source']
     if previous is None:
-        return len(language_units(text)) >= 4 or bool(critical_signature(text))
+        return len(language_units(text)) >= PREVIEW_FIRST_WORDS or bool(critical_signature(text))
     if text == previous['source']:
         return False
     if critical_signature(text) != critical_signature(previous['source']):
@@ -46,7 +54,7 @@ def preview_due(item, previous, now):
         common+=1
     # Revisions count changed suffix words; continuous small edits get a bounded refresh.
     elapsed=now-previous['dispatched_at']
-    return (len(new)-common >= 4 and elapsed >= 1) or elapsed >= 5
+    return (len(new)-common >= PREVIEW_STEP_WORDS and elapsed >= PREVIEW_MIN_GAP) or elapsed >= PREVIEW_MAX_GAP
 
 
 def validate_translation(content):
