@@ -1,7 +1,7 @@
 [project]
-name = "classroom-local-translator"
+name = "same-page"
 version = "0.10.2"
-description = "Offline English to Chinese classroom captions for Apple Silicon"
+description = "Same Page: offline live captions and translation (English, Russian, mixed to Simplified Chinese) with local Whisper and Hy-MT"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "whisperlivekit[mlx-whisper]==0.2.26",
