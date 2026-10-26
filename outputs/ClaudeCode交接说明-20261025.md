@@ -3,7 +3,7 @@
 ## 入口与当前任务
 
 实际开发仓库：`/Users/z/Documents/Codex/2026-10-23/1-whisper-2-hy-mt2-1`。
-用户集中查看目录：`/Users/z/Documents/Codex/2026-10-24/users-z-documents-codex-20261024-md/outputs/Same Page项目`；其中 `02_开发源码` 是仓库链接，不是第二份源码。
+用户集中查看目录：仓库内的 `项目资料/`（2026-10-26 起由旧整理目录迁入；旧位置只留链接）。
 
 先读仓库 `AGENTS.md`、`outputs/PRD.md`（唯一PRD）和 `outputs/使用说明.md`。后续需求由用户另行提供；本次只是交接，不继续加功能、做安装包或提交推送。
 
