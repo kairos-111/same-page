@@ -13,7 +13,7 @@ Apple Silicon Mac上的桌面应用，Whisper MLX提供英语、俄语、英俄�
 - 早期测量：[outputs/短测验收报告.md](outputs/短测验收报告.md)，按样本与日期理解。
 - 开发协作规则：[AGENTS.md](AGENTS.md)。
 
-本仓库就是唯一的项目文件夹。本机应用、Windows安装包、验证记录和历史参考都在仓库内的 `项目资料/`（不纳入Git）；旧整理目录只留一个指向它的链接。
+项目文件夹是 `~/Documents/Same Page/`：本仓库在其中的 `源码/`，同级放本机应用、Windows安装包、项目文档、验证记录和历史参考。旧路径 `Codex/2026-10-23/1-whisper-2-hy-mt2-1` 与旧整理目录只留指向这里的链接。
 
 ## 源码结构
 
