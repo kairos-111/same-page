@@ -13,7 +13,7 @@
 | Mac 版 | **0.10.2**，本机 `Same Page.app` 与源码一致，日常可用 |
 | Windows 版 | 0.10.2 安装包已构建（1.66 GB），**未在真实 Windows 电脑上运行过** |
 | 支持语言 | 英语→中文、俄语→中文、英俄中混合→中文（试用）；中文片段统一简体后直接保留 |
-| 代码 | 分支 `fix/recording-playback-import`，已全部提交，**未推送**；GitHub 私有仓库 [kairos-111/offline-classroom-translator](https://github.com/kairos-111/offline-classroom-translator) |
+| 代码 | GitHub 私有仓库 [kairos-111/same-page](https://github.com/kairos-111/same-page)（2026-10-26 由 offline-classroom-translator 改名，旧地址自动跳转），`main` 分支与本地一致 |
 | 项目文件夹 | `~/Documents/Same Page/`（仓库在其中 `源码/`），见第 12 节 |
 
 本文是唯一的产品需求与交接基准，实际文件为 `源码/outputs/PRD.md`，项目文件夹顶层的 `PRD.md` 是指向它的链接。
