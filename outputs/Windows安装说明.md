@@ -1,6 +1,6 @@
 # Same Page Windows 版 · 安装说明
 
-安装包：`SamePage-0.10.2-windows-x64-setup.exe`（约 1.8 GB，附 `.sha256` 校验值）
+安装包：`SamePage-0.10.2-windows-x64-setup.exe`（约 1.7 GB，附 `.sha256` 校验值）
 
 ## 电脑要求
 

@@ -1,33 +1,34 @@
-# Same Page 项目协作与持续交接规则
+# Same Page 开发协作规则
 
 ## 开始前
 
-- 先阅读 `outputs/PRD.md`，这是唯一的产品需求、实现现状、已验证证据和待办基准。再按任务阅读 `outputs/使用说明.md`、`outputs/短测验收报告.md` 和实际代码。
-- 用户最新要求优先。当前主范围为本机离线en/ru/mixed三模式→中文，Small默认；混合为试用，不能把多人重叠、反向互译或云端API当成已有能力。
-- 检查 Git 状态，尊重现有未提交修改。
+- 先读 `outputs/PRD.md`：唯一的产品需求、当前进度、不可破坏的规则（第 4、7 节）和待办。再按任务读 `outputs/使用说明.md` 和实际代码。
+- 项目**已暂停开发**（2026-10-26）。用户会另行给出新要求，不要自动延续旧任务。
+- 用户最新要求优先。回复用户用中文。
+- 先看 `git status`，尊重未提交修改；不 reset、不 clean。
 
-## PRD 按用户要求统一更新（2026-10-25 起）
+## 工作范围
 
-- 日常迭代不再每次修改都更新 `outputs/PRD.md`、`outputs/使用说明.md`。用户会在多轮迭代后明确要求更新，届时把这期间的全部改动合并成**一个**新版本写入 PRD（一条变更记录、一次版本号递增）。
-- 合并更新时：更新相关章节、需求/待办状态、文档版本、最近更新日期及变更记录；内部重构也记录“是否改变产品行为”和验证情况；行为变化同步使用说明。为此，迭代中在提交信息里写清改了什么、验证了什么，作为之后汇总的依据。
-- 必须区分已实现、已验证、计划。不得把代码存在写成已通过真实课堂验证，不得把未运行的测试写成通过。历史测量注明样本和口径。
-- 行为变化同步 `outputs/使用说明.md`；新测量保留日期和条件，不篡改历史验收结果。
-- 不另建第二份替代 PRD。任务完成前检查文档与代码一致；交接说明还剩哪些待办编号。
+- 项目文件夹是 `~/Documents/Same Page/`，本仓库为其中 `源码/`。所有工作只在这个文件夹里进行，新文件也只放这里：代码与文档进 `源码/`，交付物进编号文件夹。
+- 用户数据在 `~/Library/Application Support/听课/`（应用依赖这个位置，不移动）。
+
+## PRD 按用户要求统一更新
+
+- 日常迭代不改 PRD 和使用说明。用户明确要求时，把这期间的改动合并成**一个**新版本（一条版本记录、一次版本号递增）。为此，提交信息要写清改了什么、验证了什么。
+- 区分已实现、已验证、计划；不把代码存在写成已在真实课堂验证，不把没跑的测试写成通过。
+- 不另建第二份 PRD。
 
 ## 运行与数据保护
 
-- 服务入口为 `http://127.0.0.1:8767/`；8768 为内部模型服务；8766 曾是下载面板，不能当产品入口。
-- 启动、停止、模型测试或重启前检查 `/api/state`。若用户正在 loading/running/draining，不得为自动测试而停止、替换或争用会话/模型服务。
-- 不自动开始录音，不上传录音或启用 API，不将本地令牌与密钥写入文档或提交。
-- 不删除/覆盖 `outputs/sessions/`、`work/` 或 `.venv/`。Git 忽略目录中有私人原声、已下载模型和运行材料。
-- 用户已取消 90 分钟开发测试；真实课堂由用户试用反馈。只运行与变更相称的必要检查。
-- 新模型/部署兼容性先核对实际版本与本机条件；不能把历史讨论当实测结论。
+- 本机应用 8877/8878；开发版 8767/8768。启动、停止、重启或占用模型前先查对应 `/api/state`；有 loading/running/draining 会话时不干扰。
+- 不自动录音，不上传录音，不启用云端 API，不把本地令牌与密钥写进文档或提交。
+- 不删除或覆盖 `outputs/sessions/`、`.venv/` 和 `work/` 中的模型与运行时。
+- 不做 90 分钟长测；只跑与改动相称的检查。
+- 签名、公证等账号密码由用户本人输入。
 
-## 常用检查
+## 测试、提交与部署
 
-日常迭代只跑与本次改动相关的关键测试（改哪个模块就跑对应测试文件，加上 `node --check` 和 `git diff --check`），不必每次跑全量；测试通过后直接提交，无需再征求用户确认。提交信息写清改动与验证情况。
-
-提交后直接装进本机应用，无需询问（2026-10-25 用户要求）：先查 8877 `/api/state`，有 loading/running/draining 会话或模型正在启停就暂缓并告知用户；空闲时把 `classroom/` 用 rsync（排除缓存）同步到 `Same Page.app/Contents/Resources/engine/classroom/`，`scripts/serve.py` 一并同步；改了 `desktop/`（包括 `desktop/icons/`：程序坞显示的是编进程序的 `icon.png`，只换 `AppIcon.icns` 不够）才重新编译 release 程序替换 `Contents/MacOS/tingke-desktop`，并把 `desktop/icons/icon.icns` 复制为 `Contents/Resources/AppIcon.icns`；然后 `codesign --force --deep --sign -` 并 `--verify --deep --strict`。最后停止空闲的引擎和应用进程再重新打开，核对新接口可用。版本号变化时同步 `bundle.json`、`work/deployment.json` 和 Info.plist。
+日常只跑与改动相关的关键测试（加 `node --check` 和 `git diff --check`），通过后直接提交，无需征求确认。**推送 GitHub 需要用户同意。**
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
@@ -35,24 +36,10 @@ node --check classroom/static/app.js
 git diff --check
 ```
 
-仅文档修改无需启动模型重新测听译。集成测试与恢复命令的约束见 PRD；当前部署脚本仍依赖未纳入版本管理的本机下载材料，干净克隆并非完整安装包。
+提交后直接装进本机应用：先查 8877 `/api/state`，有会话或模型正在启停就暂缓并告知用户；空闲时运行 `work/deploy.sh`，或手动把 `classroom/` 用 rsync（排除缓存）同步到 `01_本机应用/Same Page.app/Contents/Resources/engine/classroom/`，`scripts/serve.py` 一并同步。改了 `desktop/`（含 `desktop/icons/`：程序坞用的是编进程序的 `icon.png`）才重新编译 release 程序替换 `Contents/MacOS/tingke-desktop`，并把 `icon.icns` 复制为 `Contents/Resources/AppIcon.icns`。然后 `codesign --force --deep --sign -`、`--verify --deep --strict`，停掉空闲的旧引擎和应用再重开，核对版本与接口。版本号变化时同步 `bundle.json`、`work/deployment.json` 和 Info.plist。
 
-可交付文档与使用入口放 `outputs/`，中间文件和日志放 `work/`。不得提交模型、环境、密钥、私人录音或大型运行产物。
+不提交模型、环境、密钥、私人录音或大型运行产物。可交付文档放 `outputs/`，中间文件和日志放 `work/`。
 
-## 当前品牌与兼容边界（0.10.1）
+## 兼容边界
 
-Same Page，主slogan“每一句，都跟得上。”，导航使用“开始翻译/我的记录/设置”。当前提供英语→中文、俄语→中文、英俄中混合→中文（试用）；中文源文本以简体直通，混合中文片段由程序保护；OpenCC t2s内置字典统一原文/译文/历史阅读及导出字形，原始事件不回写。保留独立版app.tingke.local、开发版app.tingke.desktop.dev、音频助手ID、~/Library/Application Support/听课/、tk.*偏好键及CSV真实文件名。应用为Same Page.app，旧入口兼容，不自动回迁或重命名用户记录。DMG继续暂停。
-
-模型控制（0.10.1）：Small、Turbo、翻译按此顺序；状态为绿色“启动”/红色“已停止”，点击切换启停，辅助提示明确实际动作。一键加载三个，Small/Turbo权重独立缓存但单会话仍只选一个，流式状态不得跨会话复用；禁止停止一个时清空另一个。
-
-多语言链路：全部Whisper调用显式task=transcribe，恢复不得退回英语。language_mode旧请求默认en；旧记录不回写。混合声学切换/缓存及局部时间戳保护必须保留；缓存不能跨会话复用，中文直通版本不能被旧译文覆盖。无停顿混说与真实场景尚未充分验收。
-
-0.10.1混合恢复：语言检测是有审计的限定提示，不用绝对概率直接判识别缺口；弱短段合并相邻上下文，RecognitionPending/asr_waiting最多等待2秒新音频。waiting不能清空在线缓冲、进入composer/翻译或定稿；结束/积压保护与最终质量拒绝必须保留。真实对照音频仅留私有work，不能提交。项目文件夹是 `~/Documents/Same Page/`（本仓库为其中的 `源码/`；本机应用、安装包、项目文档、验证记录与历史参考在同级的编号文件夹），所有工作只在该文件夹内进行，新文件也只放这里；用户数据仍在 `~/Library/Application Support/听课/`（应用依赖该位置，不移动）。
-
-混合先验必须按最后一个明确声学探测更新，不能用含弱片段的合并区段标记回退到旧前缀语言。1秒输入通过不代替生产批量/收尾链路检查。
-
-字幕呈现按用户要求：不在正文插入unresolved系统消息/黄色卡片/空行；拒绝时撤回旧预览，范围和计数放详情，审计与导出继续保留。普通完整性提示不弹正文横幅；真实阻断错误仍提示。
-
-0.10.2录音与导入（已装入本机.app）：结束时把PCM暂存合并为单个`audio_0000.wav`，帧数核对通过后才删PCM；回放走`RecordingStream`（一个文件头，支持Range），旧记录多段WAV也必须拼成一条。导入文件不按原速（`realtime:false`），快速导入不得以积压为由关闭识别补救，中途结束只识别到当前位置并保留未处理区间。旧记录重复PCM只能经用户确认后用`scripts/dedupe_recordings.py --apply`清理。
-
-应用副本（2026-10-25）：Spotlight里只应出现集中目录的`Same Page.app`。更新前的回滚副本只留一个，放`work/backups.noindex/`，验收后移入废纸篓；开发构建在`work/desktop.noindex/`。不要在可索引目录里留.app副本。
+保留 Bundle ID `app.tingke.local`（开发版 `app.tingke.desktop.dev`）、音频助手 ID、`~/Library/Application Support/听课/`、`tk.*` 偏好键和 CSV 真实文件名。两套记录（本机应用与旧开发版）不合并、不回迁。Spotlight 里只应出现 `01_本机应用/Same Page.app`；不要在可索引目录留 .app 副本，更新前的回滚副本放 `work/backups.noindex/`，验收后移入废纸篓。

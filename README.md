@@ -2,45 +2,37 @@
 
 **每一句，都跟得上。**
 
-Apple Silicon Mac上的桌面应用，Whisper MLX提供英语、俄语、英俄中混合三种识别模式，Hy-MT2直接译中文；中文片段统一简体后保留，混合模式试用。
+在 Apple Silicon Mac 上运行的桌面应用：把英语、俄语或英俄中混合的声音变成原文字幕，并用本地模型直接译成简体中文。识别与翻译都在本机完成，不上传。
 
-交接入口：[Claude Code交接说明](outputs/ClaudeCode交接说明-20261025.md)。后续要求由用户提供；当前工作区另有未验收新增改动，详见交接。
+**当前状态：开发暂停（2026-10-26）。** Mac 版 0.10.2 可日常使用；Windows 安装包已构建但未在真机运行过。
 
 ## 从哪里看
 
-- 产品需求、当前实现、验证边界与遗留问题：[outputs/PRD.md](outputs/PRD.md)，唯一基准。
-- 操作说明：[outputs/使用说明.md](outputs/使用说明.md)。
-- 早期测量：[outputs/短测验收报告.md](outputs/短测验收报告.md)，按样本与日期理解。
-- 开发协作规则：[AGENTS.md](AGENTS.md)。
+- [outputs/PRD.md](outputs/PRD.md)：唯一的产品需求、当前进度、规则与待办。
+- [outputs/使用说明.md](outputs/使用说明.md)：怎么用。
+- [outputs/安装包规划.md](outputs/安装包规划.md)、[outputs/Windows安装说明.md](outputs/Windows安装说明.md)：安装包。
+- [AGENTS.md](AGENTS.md)：开发协作规则。
 
-项目文件夹是 `~/Documents/Same Page/`：本仓库在其中的 `源码/`，同级放本机应用、Windows安装包、项目文档、验证记录和历史参考。旧路径 `Codex/2026-10-23/1-whisper-2-hy-mt2-1` 与旧整理目录只留指向这里的链接。
+## 项目文件夹
+
+本仓库是 `~/Documents/Same Page/源码/`。同级有本机应用、Windows 安装包、文档链接、历史记录、课堂记录入口和开发运行材料，见上一级的 `00_先看这里.md`。
 
 ## 源码结构
 
 | 目录 | 职责 |
 |---|---|
-| classroom/ | Python业务程序：本地API、识别、字幕、翻译调度、历史保存与网页界面 |
-| classroom/static/ | 桌面窗口内的HTML/CSS/JavaScript界面 |
-| desktop/ | Tauri/Rust窗口、后台进程管理、桌面配置与依赖锁 |
-| native/ | Swift麦克风及电脑声音采集组件源码 |
-| scripts/ | 正式启动、构建、恢复和检查脚本；bundle_local.py仅在明确需要重建时运行 |
-| tests/ | 受控回归测试和前端状态脚本 |
-| outputs/ | 唯一PRD、使用说明、术语、旧开发版课堂/采集组件；archive/为早期参考 |
-| work/ | 模型、离线材料、运行时、工具链、构建产物及归档验证材料，见work/README.md |
-| .venv/ | 当前已安装的开发Python环境，不作为分发环境复制 |
+| classroom/ | Python 业务：本地 API、识别、字幕、翻译调度、保存与记录管理；static/ 为界面；wlk/ 为内置的流式识别算法 |
+| desktop/ | Tauri/Rust 桌面窗口 |
+| native/ | Swift 麦克风与电脑声音采集 |
+| windows/ | Windows 启动器、构建脚本与 NSIS 安装脚本 |
+| scripts/ | 启动、装配、恢复、去重脚本 |
+| tests/ | 回归测试 |
+| outputs/ | PRD、使用说明、术语表、旧开发版记录；archive/ 为早期资料 |
+| work/ | 模型、运行时、工具链、构建产物（不进 Git，见 work/README.md） |
 
-## 运行与数据
+## 运行
 
-独立应用已更新为0.10.1 Same Page，位于集中入口的“01_本机应用”。双击“Same Page.app”或“打开 Same Page.command”即可；不会自动录音。独立版使用8877/8878，数据在`~/Library/Application Support/听课/`。
+- 日常使用：双击项目文件夹里的 `Same Page.app`（端口 8877/8878，数据在 `~/Library/Application Support/听课/`）。打开应用会自动加载模型，不会自动录音。
+- 开发版：`outputs/启动课堂翻译.command`（浏览器 8767）或 `outputs/启动听课桌面版.command`（开发窗口，需先编译）。开发版使用仓库内的独立数据，两版记录不合并，不要同时跑模型。
 
-开发模式仍可使用`outputs/启动课堂翻译.command`（浏览器8767）或`outputs/启动听课桌面版.command`（开发窗口）；使用项目原有数据。两版不会自动合并记录，不要同时运行模型。
-
-安装包制作暂停，继续完善功能。必要管理功能短测已通过，不代表识别延迟/完整性或全部设备权限已验收。每次产品或部署变更同步PRD，不自动开始麦克风或90分钟测试。
-
-仓库不含模型、环境和私人录音。GitHub：[kairos-111/offline-classroom-translator](https://github.com/kairos-111/offline-classroom-translator)，私有。当前本轮开发改动尚未提交/推送。
-
-0.9.0更新品牌与通用记录文案；0.9.1将一键启动改为加载Small、Turbo和Hy-MT三个模型，两个识别模型独立驻留，支持单项停止。0.10.0新增三种面向中文的模式，混合为试用；当前不提供反向互译。旧数据目录、Bundle ID和阅读偏好保持兼容，旧应用入口留链接。
-
-0.10.1修复混合模式语言误拒及短片段清缓冲；有界等待上下文、缺口信息收进详情，37秒用户授权原声对照详见PRD D.6。
-
-0.10.2（已装入本机应用）：录音结束后只存一个WAV；应用内回听可完整播放和拖动，换记录不再播旧录音；导入文件不按原速处理并显示进度。详见PRD附录D.8。
+仓库不含模型、环境和私人录音。GitHub：[kairos-111/offline-classroom-translator](https://github.com/kairos-111/offline-classroom-translator)（私有）；当前分支 `fix/recording-playback-import` 未推送。
